@@ -112,7 +112,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 ### Fase 0 — Fondasi repo (±1 sesi)
 - [x] **F0.1** Scaffold monorepo pnpm+turbo, tsconfig strict, eslint+boundaries, vitest — `pnpm test` & `pnpm build` hijau di repo kosong.
 - [x] **F0.2** CI GitHub Actions: lint+test+build di tiap PR — badge hijau.
-- [ ] **F0.3** Tulis `docs/RULESET.md` v1: seluruh angka dari GDD (§4–6) dalam tabel + formula damage — direview manual sebelum lanjut.
+- [x] **F0.3** Tulis `docs/RULESET.md` v1: seluruh angka dari GDD (§4–6) dalam tabel + formula damage — draft ditulis, **menunggu review manual** sebelum lanjut ke Fase 1 (lihat status banner & §9 di RULESET.md).
 
 ### Fase 1 — Sim engine (jantung; ±3–4 sesi)
 - [ ] **S1.1** Types + PRNG + fixed-point helpers — property test: PRNG sequence identik lintas run.
