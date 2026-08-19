@@ -119,7 +119,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 - [x] **S1.2** Graph & validasi topologi (setiap Entry punya jalur ke Core; budget node) — unit test kasus valid/invalid.
 - [x] **S1.3** Engine tick loop + movement blocks (Shortest Path, Random Walk seeded, Backtrack) — golden log test: 3 skenario di-freeze sebagai snapshot. **Catatan:** scope murni movement; node combat (S1.4) & logic blocks (S1.5) belum ada, Core arrival masih instant-win stub — lihat docs/ADR/0001.
 - [x] **S1.4** Node pertahanan: Router, Firewall, ICE, Honeypot, Scanner, Trap, Core — tiap node ≥3 unit test perilaku.
-- [ ] **S1.5** Blok Sensor/Condition/Attack/Stealth/Utility (12 blok v1 sesuai RULESET) — tiap blok ≥2 test.
+- [x] **S1.5** Blok Sensor/Condition/Attack/Stealth/Utility (12 blok v1 sesuai RULESET) — tiap blok ≥2 test.
 - [ ] **S1.6** Determinisme lintas platform: jalankan suite di Node Linux + browser (CI matrix) — hash BattleLog identik.
 - [ ] **S1.7** `tools/balance-lab`: N virus archetype × M defense archetype → tabel winrate — CLI jalan, output markdown; tidak ada matchup >75% winrate di ruleset v1.
 

@@ -7,4 +7,5 @@ export * from "./ruleset.js";
 export * from "./graph.js";
 export * from "./movement.js";
 export * from "./nodes/index.js";
+export * from "./blocks/index.js";
 export * from "./engine.js";

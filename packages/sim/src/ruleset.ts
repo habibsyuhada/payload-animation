@@ -166,3 +166,147 @@ const TRAP_DAMAGE_V1: Readonly<Record<BlockTier, number>> = { 1: 180, 2: 260, 3:
 export function getTrapDamage(tier: BlockTier): number {
   return TRAP_DAMAGE_V1[tier];
 }
+
+/*
+ * --- Logic block configs, RULESET.md §4 (S1.5) ---
+ * Weight (payload KB) isn't consumed by simulate() — it belongs to virus-budget validation,
+ * not battle physics — so it isn't modeled here; only the tables simulate() actually reads.
+ */
+
+interface ScanAheadConfig {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly revealsTraps: boolean;
+}
+
+const SCAN_AHEAD_CONFIG_V1: readonly ScanAheadConfig[] = [
+  { tier: 1, radiusHops: 1, revealsTraps: false },
+  { tier: 2, radiusHops: 2, revealsTraps: false },
+  { tier: 3, radiusHops: 2, revealsTraps: true },
+];
+
+export function getScanAheadConfig(tier: BlockTier): ScanAheadConfig {
+  const entry = SCAN_AHEAD_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 scan-ahead config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface DetectHoneypotConfig {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly seesDisguise: boolean;
+}
+
+const DETECT_HONEYPOT_CONFIG_V1: readonly DetectHoneypotConfig[] = [
+  { tier: 1, radiusHops: 1, seesDisguise: false },
+  { tier: 2, radiusHops: 2, seesDisguise: false },
+  { tier: 3, radiusHops: 2, seesDisguise: true },
+];
+
+export function getDetectHoneypotConfig(tier: BlockTier): DetectHoneypotConfig {
+  const entry = DETECT_HONEYPOT_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 detect-honeypot config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const BRUTE_FORCE_DAMAGE_V1: Readonly<Record<BlockTier, number>> = { 1: 40, 2: 60, 3: 85 };
+
+export function getBruteForceDamagePerTick(tier: BlockTier): number {
+  return BRUTE_FORCE_DAMAGE_V1[tier];
+}
+
+const EXPLOIT_DAMAGE_V1: Readonly<Record<BlockTier, number>> = { 1: 250, 2: 380, 3: 520 };
+
+export function getExploitDamage(tier: BlockTier): number {
+  return EXPLOIT_DAMAGE_V1[tier];
+}
+
+interface OverloadConfig {
+  readonly tier: BlockTier;
+  readonly splashDamage: number;
+  readonly radiusHops: number;
+}
+
+const OVERLOAD_CONFIG_V1: readonly OverloadConfig[] = [
+  { tier: 1, splashDamage: 150, radiusHops: 1 },
+  { tier: 2, splashDamage: 230, radiusHops: 1 },
+  { tier: 3, splashDamage: 320, radiusHops: 2 },
+];
+
+export function getOverloadConfig(tier: BlockTier): OverloadConfig {
+  const entry = OVERLOAD_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 overload config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const CLOAK_DURATION_NODES_V1: Readonly<Record<BlockTier, number>> = { 1: 3, 2: 4, 3: 5 };
+
+/**
+ * RULESET.md §4.4 tier III also grants "-50% Scanner detection radius while Cloak is active" —
+ * skipped: Cloak already grants full Scanner-status immunity while active, which strictly
+ * dominates a radius reduction, so the sub-clause has no observable effect to implement.
+ */
+export function getCloakDurationNodes(tier: BlockTier): number {
+  return CLOAK_DURATION_NODES_V1[tier];
+}
+
+interface SlowCrawlConfig {
+  readonly tier: BlockTier;
+  readonly speedMultiplierPermille: number;
+  readonly iceAccuracyReductionPermille: number;
+}
+
+const SLOW_CRAWL_CONFIG_V1: readonly SlowCrawlConfig[] = [
+  { tier: 1, speedMultiplierPermille: 700, iceAccuracyReductionPermille: 300 },
+  { tier: 2, speedMultiplierPermille: 750, iceAccuracyReductionPermille: 400 },
+  { tier: 3, speedMultiplierPermille: 800, iceAccuracyReductionPermille: 500 },
+];
+
+export function getSlowCrawlConfig(tier: BlockTier): SlowCrawlConfig {
+  const entry = SLOW_CRAWL_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 slow-crawl config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const SELF_REPAIR_HEAL_V1: Readonly<Record<BlockTier, number>> = { 1: 5, 2: 8, 3: 12 };
+
+export function getSelfRepairHealPerTick(tier: BlockTier): number {
+  return SELF_REPAIR_HEAL_V1[tier];
+}
+
+interface SacrificeDecoyConfig {
+  readonly tier: BlockTier;
+  readonly chargesTotal: number;
+  readonly absorbsPerActivation: number;
+}
+
+const SACRIFICE_DECOY_CONFIG_V1: readonly SacrificeDecoyConfig[] = [
+  { tier: 1, chargesTotal: 1, absorbsPerActivation: 1 },
+  { tier: 2, chargesTotal: 2, absorbsPerActivation: 1 },
+  { tier: 3, chargesTotal: 3, absorbsPerActivation: 2 },
+];
+
+export function getSacrificeDecoyConfig(tier: BlockTier): SacrificeDecoyConfig {
+  const entry = SACRIFICE_DECOY_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 sacrifice-decoy config for tier ${tier}`);
+  }
+  return entry;
+}
+
+/** RULESET.md §4.2: first Sacrifice Decoy arm threshold, and each re-arm's drop from the last trigger point. */
+export const SACRIFICE_DECOY_THRESHOLD_STEP_PERMILLE = 200;
+
+/** RULESET.md §4.2: tier I default threshold for "IF Integrity < X%" when the player hasn't configured one. */
+export const DEFAULT_INTEGRITY_THRESHOLD_PERMILLE = 500;
+
+/** RULESET.md §4.2: default target for "IF Node = Firewall" when the player hasn't configured one. */
+export const DEFAULT_CONDITION_TARGET_NODE_TYPES: readonly DefenseNodeType[] = ["firewall"];

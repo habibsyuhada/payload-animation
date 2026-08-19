@@ -30,6 +30,13 @@ export interface MovementBlock {
 export interface LogicBlock {
   readonly kind: LogicBlockKind;
   readonly tier: BlockTier;
+  /**
+   * "if-integrity-below" only — permille threshold (RULESET.md §4.2: tier I fixed 500‰/50%,
+   * tier II/III player-configurable). Defaults to 500 if omitted.
+   */
+  readonly integrityThresholdPermille?: number;
+  /** "if-node-type" only — node types this condition matches. Defaults to ["firewall"] if omitted. */
+  readonly targetNodeTypes?: readonly DefenseNodeType[];
 }
 
 export interface VirusDesign {
@@ -85,6 +92,7 @@ export type BattleEventType =
   | "node-destroyed"
   | "status-applied"
   | "status-expired"
+  | "decoy-absorbed"
   | "battle-timeout"
   | "battle-won";
 

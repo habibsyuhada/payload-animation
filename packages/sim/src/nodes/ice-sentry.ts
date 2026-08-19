@@ -11,9 +11,9 @@ export function rollIceSentryHit(rng: Rng, accuracyPermille: number): boolean {
   return rng.nextInt(1000) < accuracyPermille;
 }
 
-/** Accuracy after a Scanner "scanned" status bonus (clamped — accuracy is a probability, never past 1000‰). */
-export function effectiveAccuracyPermille(baseAccuracyPermille: number, scannedBonusPermille: number): number {
-  return Math.min(1000, baseAccuracyPermille + scannedBonusPermille);
+/** Accuracy after Scanner's "scanned" bonus and Slow Crawl's reduction (clamped — accuracy is a probability, [0, 1000]‰). */
+export function effectiveAccuracyPermille(baseAccuracyPermille: number, scannedBonusPermille: number, slowCrawlReductionPermille = 0): number {
+  return Math.max(0, Math.min(1000, baseAccuracyPermille + scannedBonusPermille - slowCrawlReductionPermille));
 }
 
 export function iceSentryDamage(tier: BlockTier): number {
