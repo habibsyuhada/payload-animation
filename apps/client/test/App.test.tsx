@@ -48,11 +48,10 @@ describe("App navigation", () => {
     expect(screen).toBeDefined();
   });
 
-  it("renders all 7 nav links", async () => {
-    const nav = await findByTestId("app-header"); // wait for first render to land
-    expect(nav).toBeDefined();
-    const links = page.getByRole("link").elements();
-    expect(links).toHaveLength(SCREENS.length);
+  it("renders all 7 nav links in the bottom nav (screens themselves may contain their own extra links)", async () => {
+    await findByTestId("app-header"); // wait for first render to land
+    const navLinks = document.querySelectorAll(".payload-nav-link");
+    expect(navLinks).toHaveLength(SCREENS.length);
   });
 
   for (const target of SCREENS) {

@@ -7,6 +7,7 @@ import { Scan } from "./screens/Scan.js";
 import { Replay } from "./screens/Replay.js";
 import { Research } from "./screens/Research.js";
 import { League } from "./screens/League.js";
+import { Onboarding } from "./screens/Onboarding.js";
 
 /**
  * The 7 screens (GDD §12), route paths, and short nav labels. `HashRouter` (not `BrowserRouter`)
@@ -23,6 +24,9 @@ const NAV_ITEMS = [
   { path: "/league", label: "League", element: <League /> },
 ] as const;
 
+/** Onboarding (C3.4) isn't one of the 7 main nav screens — it's a one-time flow launched from Home, not something a returning player navigates back into via the bottom bar. */
+const EXTRA_ROUTES = [{ path: "/onboarding", element: <Onboarding /> }] as const;
+
 function AppShell(): JSX.Element {
   const activeScreenTitle = useAppShellStore((state) => state.activeScreenTitle);
 
@@ -34,6 +38,9 @@ function AppShell(): JSX.Element {
       <div className="payload-app-content">
         <Routes>
           {NAV_ITEMS.map((item) => (
+            <Route key={item.path} path={item.path} element={item.element} />
+          ))}
+          {EXTRA_ROUTES.map((item) => (
             <Route key={item.path} path={item.path} element={item.element} />
           ))}
         </Routes>
