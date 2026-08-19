@@ -50,7 +50,7 @@ describe("IF Node = Firewall — engine integration (gates Exploit to fire only 
       defense: graph,
     };
     const log = simulate(input);
-    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -260 }));
+    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -265 }));
   });
 
   it("does not fire Exploit at Core when the condition targets only Firewall", () => {
@@ -61,8 +61,9 @@ describe("IF Node = Firewall — engine integration (gates Exploit to fire only 
       defense: graph,
     };
     const log = simulate(input);
-    // core's only damage should be the plain -10/tick passive drain, never -260 (exploit) since core != firewall.
+    // core's only damage should be the plain 15/tick passive drain (or less on the final
+    // partial tick), never the -265 one-shot Exploit hit, since core != firewall.
     const coreDamageEvents = log.events.filter((event) => event.type === "node-damaged" && event.target === "4");
-    expect(coreDamageEvents.every((event) => event.delta === -10)).toBe(true);
+    expect(coreDamageEvents.every((event) => (event.delta ?? 0) >= -15)).toBe(true);
   });
 });

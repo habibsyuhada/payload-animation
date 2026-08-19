@@ -168,9 +168,10 @@ Aktif otomatis sepanjang battle sejak kondisi terpenuhi (non-toggle, tidak butuh
 Tiap node masuk salah satu dari 5 kelas perilaku — ini yang menentukan file/kelas di S1.4:
 
 1. **Breach** (memblokir jalur sampai HP=0): `Firewall`, `Core`. Virus occupy node ini tiap tick
-   sampai HP node = 0. Semua Breach Node kena **passive drain 10 HP/tick** dari sekadar occupancy
-   (menjamin virus tanpa blok Attack tetap bisa menang, hanya lambat), ditambah kontribusi blok
-   Attack aktif (§4.3). Hanya `Firewall` yang membalas damage ke virus tiap tick (`Core` tidak).
+   sampai HP node = 0. Semua Breach Node kena **passive drain 15 HP/tick** dari sekadar occupancy
+   (menjamin virus tanpa blok Attack tetap bisa menang lawan Firewall Tier I, hanya lambat —
+   dinaikkan dari 10 ke 15 setelah S1.7 balance-lab; lihat §9), ditambah kontribusi blok Attack
+   aktif (§4.3). Hanya `Firewall` yang membalas damage ke virus tiap tick (`Core` tidak).
 2. **Shoot** (ranged, tidak memblokir jalur): `ICE Sentry`. Menembak virus mana pun dalam radius
    R (graph-hop dari node ICE Sentry) setiap N tick.
 3. **Trigger** (one-shot saat node pertama dimasuki, lalu inert): `Honeypot`, `Trap Node`.
@@ -282,29 +283,59 @@ dan loot (M5.2) — bobot pastinya di luar cakupan ruleset sim, didefinisikan di
 
 ---
 
-## 9. Item terbuka untuk `tools/balance-lab` (S1.7)
+## 9. Temuan `tools/balance-lab` (S1.7)
 
-Ditandai eksplisit supaya tidak dianggap final sebelum simulasi massal jalan:
+`tools/balance-lab` (`pnpm --filter @payload/balance-lab report`) menjalankan 5 arketipe virus ×
+4 arketipe defense (semua tier akun 1), 200 seed per matchup. Laporan lengkap ter-generate di
+`tools/balance-lab/REPORT.md`. Status per item:
 
-- [ ] Apakah archetype full-Stealth (Cloak+Slow Crawl, minim Attack) punya winrate wajar lawan
-  defense heavy-ICE, atau under/overperform?
 - [x] ~~Apakah Firewall Tier III + counter-damage 45/tick terlalu keras untuk virus non-Attack~~
-  **Dikonfirmasi via simulasi S1.4** (`test/nodes/firewall.test.ts`): tanpa blok Attack (S1.5
-  belum ada), virus vs Firewall Tier I berakhir **seri persis** — virus mati tepat di tick yang
-  sama Firewall itu hancur (passive drain 10/tick × counter 20/tick = total 1000 damage = tepat
-  Integrity maksimum virus). Tier II/III (counter 30/45 per tick) jelas fatal lebih cepat dari
-  itu. Kesimpulan: di v1, **virus tanpa Attack blok tidak pernah benar-benar menembus Firewall
-  manapun dengan sisa HP** — cocok dengan intent desain, tapi berarti Self Repair (S1.5, +5–12
-  Integrity/tick) kemungkinan wajib dibawa untuk mengubah hasil seri jadi menang; perlu diverifikasi
-  ulang begitu Attack & Self Repair blocks ada (S1.5) sebelum S1.7 menilai winrate archetype.
+  **Dikonfirmasi via simulasi S1.4, lalu DIPERBAIKI via S1.7**: tanpa blok Attack, virus vs
+  Firewall Tier I awalnya berakhir **seri persis** (passive drain 10/tick × counter 20/tick =
+  tepat 1000 damage = Integrity maksimum virus) — secara efektif membuat Firewall manapun
+  hampir mustahil ditembus virus non-Attack. Balance-lab langsung mengonfirmasi ini sebagai
+  masalah sistemik: 2 dari 5 arketipe virus (yang tanpa blok Attack sama sekali) mendapat **0%
+  winrate lawan SEMUA 4 arketipe defense** — bukan cuma lawan Firewall Tier III yang memang
+  didesain keras. **Perbaikan:** `BREACH_PASSIVE_DRAIN_V1` dinaikkan dari **10 → 15** HP/tick
+  (§5.0, §0). Firewall Tier I sekarang survivable tanpa Attack blok (34 tick × 20 counter = 680
+  damage, sisa 320 Integrity); Tier II/III (counter 30/45) tetap fatal tanpa Attack blok — sesuai
+  intent desain awal (tier tinggi memang harus butuh Attack blok). Ini pengeditan v1 in-place
+  (bukan bump ke v2) karena dilakukan SEBELUM ada BattleLog nyata yang bergantung padanya —
+  RULESET v1 masih berstatus draft/belum di-playtest saat balance-lab pertama kali jalan.
+  Verifikasi ulang: `test/nodes/firewall.test.ts`, `test/nodes/core.test.ts`.
+- [x] ~~Apakah archetype full-Stealth (Cloak+Slow Crawl, minim Attack) punya winrate wajar lawan
+  defense heavy-ICE~~ **Dikonfirmasi UNDERPERFORM secara spesifik lawan satu arketipe defense**:
+  "Ghost Crawler"/"Ghost Scout" (Cloak + Detect Honeypot, tanpa Attack) mendapat 0% lawan
+  "Firewall Wall" dan "ICE Nest", tapi justru 100% lawan "Honeypot Maze" (Detect Honeypot
+  menetralkan jebakannya) — pola rock-paper-scissors yang memang diinginkan GDD §2 Pillar 1,
+  bukan under-performance across-the-board. Akar masalah spesifiknya: durasi Cloak dihitung
+  per-**node** (3–5 node), tapi ancaman terbesar (dwelling lama di satu Firewall/ICE) terjadi
+  SETELAH budget node Cloak habis — Cloak tidak membantu begitu virus berhenti bergerak. Dicatat
+  sebagai temuan mekanik untuk v2, bukan diubah sekarang (mengubah semantik durasi Cloak dari
+  "per node" ke "per tick" adalah perubahan desain blok, bukan sekadar kalibrasi angka).
+- [x] **Temuan baru dari S1.7**: arketipe defense "ICE Nest" (2× ICE Sentry Tier II + Scanner
+  Tier I mengonvergensi ke satu chokepoint Firewall bersama, 19pt) menang **100% lawan SEMUA 5
+  arketipe virus yang diuji** — termasuk yang membawa Cloak. Ini melanggar prinsip "tidak ada
+  satu strategi yang mendominasi" (GDD §2). Bukan bug angka RULESET per se (dua ICE Sentry yang
+  saling menumpuk radius memang secara matematis akan sangat kuat), tapi indikasi bahwa **v1
+  belum punya guardrail** terhadap komposisi defense semacam ini. Tidak diubah di v1 (butuh
+  keputusan desain: batasi overlap radius ICE Sentry? turunkan accuracy dasar ICE Tier II? ubah
+  Cloak jadi berbasis waktu?) — dicatat sebagai prioritas utama v2, dan sebagai catatan untuk
+  `tools/seed-defenses` (M5.4) agar tidak menghasilkan komposisi serupa di populasi AI awal.
 - [ ] Apakah Payload Budget v1 (2400–3600 KB) cukup longgar untuk minimal 2 archetype berbeda per
-  tier akun, atau terlalu ketat sehingga loadout viable jadi seragam.
-- [ ] Kalibrasi accuracy ICE Sentry (850–900‰) — cek apakah efektif rendah karena radius kecil,
-  atau terlalu dominan setelah dikombinasi Scanner aura (+150–250‰ accuracy).
-- [ ] Interaksi Overload splash vs Firewall berjajar (chain-kill) — pastikan tidak ada satu build
-  yang bisa membersihkan seluruh defense line secara trivial.
+  tier akun, atau terlalu ketat sehingga loadout viable jadi seragam — belum diuji eksplisit
+  (kelima arketipe S1.7 semua muat di bawah 2400 KB dengan margin, jadi budget tampak tidak
+  terlalu ketat, tapi ini bukan pengujian sistematis).
+- [ ] Interaksi Overload splash vs Firewall berjajar (chain-kill) — belum ada arketipe S1.7 yang
+  spesifik menguji ini; deferred ke sesi balance-lab berikutnya.
 
-Target S1.7 (per PLAN.md): tidak ada matchup arketipe >75% winrate di ruleset v1. Perubahan angka
-hasil temuan balance-lab **wajib** naik versi ruleset (`v1` → `v2`, dst.) sesuai DoD #3 — tidak
-pernah menimpa `v1.json` yang sudah dipakai battle log yang ada (replay lama harus tetap valid,
-lihat §2 kontrak data di `PLAN.md`).
+Target S1.7 (per PLAN.md): tidak ada matchup arketipe >75% winrate di ruleset v1. **Status
+sebenarnya: sebagian besar dari 20 matchup masih di luar rentang [25%, 75%]** setelah satu
+perbaikan sistemik (drain 10→15) diterapkan — sisanya sebagian besar konsisten dengan
+rock-paper-scissors yang GDD memang inginkan (tiap arketipe virus punya ≥1 matchup kuat), KECUALI
+temuan "ICE Nest" di atas yang genuinely bermasalah. Lima arketipe virus/defense di S1.7 sengaja
+dibuat sebagai build ekstrem (full-agresi, full-stealth-nol-attack, defense yang menumpuk ICE)
+untuk menguji batas sistem, bukan sampel "build rata-rata pemain" — sebagian sinyal >75%/<25% di
+sini karena itu, bukan berarti ruleset v1 rusak menyeluruh. Perubahan angka lebih lanjut hasil
+temuan balance-lab **wajib** naik versi ruleset (`v1` → `v2`, dst.) sesuai DoD #3 begitu ada
+BattleLog nyata yang bergantung pada v1 — tidak lagi boleh diedit in-place setelah titik itu.

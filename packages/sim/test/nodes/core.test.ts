@@ -4,8 +4,8 @@ import { resolveCoreTick } from "../../src/nodes/core.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 
 describe("resolveCoreTick", () => {
-  it("drains 10 HP passively, never counters back", () => {
-    expect(resolveCoreTick(100)).toEqual({ remainingHp: 90, destroyed: false });
+  it("drains 15 HP passively, never counters back", () => {
+    expect(resolveCoreTick(100)).toEqual({ remainingHp: 85, destroyed: false });
   });
 
   it("floors at 0 and reports destroyed", () => {
@@ -38,11 +38,11 @@ describe("Core — engine integration", () => {
     return { rulesetVersion: "v1", seed: 1, virus: { movement: { kind: "shortest-path" }, blocks: [] }, defense: graphWithCoreHp(coreHp) };
   }
 
-  it("wins for the attacker exactly ceil(coreHp/10) drain ticks after arrival", () => {
-    // arrives tick 4 (200du @ 50du/tick), then 100/10 = 10 drain ticks -> wins at tick 13.
+  it("wins for the attacker exactly ceil(coreHp/15) drain ticks after arrival", () => {
+    // arrives tick 4 (200du @ 50du/tick), then ceil(100/15)=7 drain ticks -> wins at tick 10.
     const log = simulate(inputWithCoreHp(100));
     expect(log.result.winner).toBe("attacker");
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 13, type: "battle-won" });
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 10, type: "battle-won" });
   });
 
   it("never counters the virus — Integrity stays full the whole battle", () => {
@@ -52,11 +52,11 @@ describe("Core — engine integration", () => {
   });
 
   it("reports a partial coreRatioPermille when the timer runs out before Core is destroyed", () => {
-    // absurdly large coreHp so 1200 ticks of drain (10/tick = 12000 max) leaves it well short of 0.
+    // absurdly large coreHp so 1200 ticks of drain (15/tick = 18000 max) leaves it well short of 0.
     const log = simulate(inputWithCoreHp(100_000));
     expect(log.result.winner).toBe("defender");
     expect(log.events[log.events.length - 1]).toMatchObject({ tick: 1200, type: "battle-timeout" });
-    // drained (1200 - 4 arrival ticks) * 10 = 11960 out of 100000
-    expect(log.result.score.coreRatioPermille).toBe(Math.floor(((100_000 - 11960) * 1000) / 100_000));
+    // drained (1200 - 4 arrival ticks) * 15 = 17940 out of 100000
+    expect(log.result.score.coreRatioPermille).toBe(Math.floor(((100_000 - 17940) * 1000) / 100_000));
   });
 });

@@ -30,10 +30,10 @@ describe("Brute Force — engine integration", () => {
     coreHp: 100,
   };
 
-  it("adds its per-tick damage on top of the passive drain (10 + 40 = 50/tick for tier I)", () => {
+  it("adds its per-tick damage on top of the passive drain (15 + 40 = 55/tick for tier I)", () => {
     const input: BattleInput = { rulesetVersion: "v1", seed: 1, virus: { movement: { kind: "shortest-path" }, blocks: [{ kind: "brute-force", tier: 1 }] }, defense: graph };
     const log = simulate(input);
-    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -50 }));
+    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -55 }));
   });
 
   it("breaks the Firewall faster than passive drain alone (500hp / 50/tick = 10 ticks vs 50 ticks unarmed)", () => {

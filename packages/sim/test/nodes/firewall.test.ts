@@ -12,9 +12,9 @@ describe("firewallMaxHp", () => {
 });
 
 describe("resolveFirewallTick", () => {
-  it("drains 10 HP passively and still counters even while far from destroyed", () => {
+  it("drains 15 HP passively and still counters even while far from destroyed", () => {
     const result = resolveFirewallTick(500, 1);
-    expect(result).toEqual({ remainingHp: 490, counterDamageToVirus: 20, destroyed: false });
+    expect(result).toEqual({ remainingHp: 485, counterDamageToVirus: 20, destroyed: false });
   });
 
   it("floors at 0 HP and reports destroyed once drained past zero", () => {
@@ -29,11 +29,11 @@ describe("resolveFirewallTick", () => {
 
 describe("Firewall — engine integration", () => {
   // entry(1)/(2) --200du--> firewall I(3) --200du--> core(4). Speed 50 -> arrives tick 4.
-  // Firewall I: HP 500, passive drain 10/tick -> breaks after 50 ticks (tick 4..53), taking
-  // 50 counter hits of 20 = 1000 total — exactly the virus's max Integrity. Without an Attack
-  // block (S1.5), v1's numbers make this an exact dead heat: the virus dies the very tick the
-  // Firewall would have broken. This is RULESET.md §9's open question, now confirmed by
-  // simulation rather than by hand — a non-Attack virus cannot survive breaching any tier.
+  // Firewall I: HP 500, passive drain 15/tick -> breaks after ceil(500/15)=34 ticks, taking
+  // 34 counter hits of 20 = 680 total. That's comfortably under the virus's 1000 max Integrity
+  // (per S1.7 balance-lab: BREACH_PASSIVE_DRAIN_V1 was raised from 10 to 15 specifically so a
+  // non-Attack virus can survive a Tier I Firewall — see RULESET.md §9). Tier II/III remain
+  // fatal without an Attack block; that part of the original S1.4 finding still holds.
   const graph: DefenseGraph = {
     nodes: [
       { id: 1, type: "entry" },
@@ -52,19 +52,19 @@ describe("Firewall — engine integration", () => {
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 1, virus: { movement: { kind: "shortest-path" }, blocks: [] }, defense: graph };
 
-  it("blocks the virus at the Firewall and ends in a dead heat: virus dies the tick the Firewall breaks", () => {
+  it("blocks the virus at the Firewall, but a Tier I Firewall is now survivable without an Attack block", () => {
     const log = simulate(input);
-    expect(log.result.winner).toBe("defender");
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 53, type: "virus-died" });
-    expect(log.events).toContainEqual(expect.objectContaining({ tick: 53, type: "node-destroyed", target: "3" }));
-    // never reached the edge past the firewall
-    expect(log.events.some((event) => event.type === "virus-entered-node" && event.target === "4")).toBe(false);
+    expect(log.events).toContainEqual(expect.objectContaining({ tick: 37, type: "node-destroyed", target: "3" }));
+    expect(log.result.winner).toBe("attacker");
+    // 320 Integrity left (1000 - 34*20) at the moment the Firewall breaks.
+    const lastCounterHit = log.events.filter((event) => event.type === "virus-damaged" && event.actor === "3").at(-1);
+    expect(lastCounterHit).toMatchObject({ tick: 37 });
   });
 
   it("counters every tick it's occupied — total damage dealt matches counterDamage × ticks-to-break", () => {
     const log = simulate(input);
     const counterHits = log.events.filter((event) => event.type === "virus-damaged" && event.actor === "3");
-    expect(counterHits).toHaveLength(50);
-    expect(counterHits.reduce((sum, event) => sum + Math.abs(event.delta ?? 0), 0)).toBe(1000);
+    expect(counterHits).toHaveLength(34);
+    expect(counterHits.reduce((sum, event) => sum + Math.abs(event.delta ?? 0), 0)).toBe(680);
   });
 });

@@ -92,7 +92,7 @@ export function getMovementBlockConfig(kind: MovementBlockKind): MovementBlockCo
 }
 
 /** All Breach nodes (Firewall, Core) take this much HP loss per tick from mere occupancy, RULESET.md §5.0. */
-export const BREACH_PASSIVE_DRAIN_V1 = 10;
+export const BREACH_PASSIVE_DRAIN_V1 = 15;
 
 interface FirewallConfig {
   readonly tier: BlockTier;

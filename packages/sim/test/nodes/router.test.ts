@@ -10,7 +10,7 @@ import type { DefenseGraph, DefenseNode } from "../../src/types.js";
 describe("Router — engine integration", () => {
   it("never blocks movement — departs on the standard next-tick schedule like any pass-through node", () => {
     // entry(1)/(2) --200du--> router(3) --200du--> core(4), speed 50: arrive router tick 4,
-    // depart tick 5, arrive core tick 9, then 100hp/10 = 10 drain ticks (9..18) -> win tick 18.
+    // depart tick 5, arrive core tick 9, then ceil(100/15)=7 drain ticks (9..15) -> win tick 15.
     const graph: DefenseGraph = {
       nodes: [
         { id: 1, type: "entry" },
@@ -30,7 +30,7 @@ describe("Router — engine integration", () => {
     const log = simulate({ rulesetVersion: "v1", seed: 1, virus: { movement: { kind: "shortest-path" }, blocks: [] }, defense: graph });
     expect(log.events).toContainEqual(expect.objectContaining({ tick: 4, type: "virus-entered-node", target: "3" }));
     expect(log.events).toContainEqual(expect.objectContaining({ tick: 9, type: "virus-entered-node", target: "4" }));
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 18, type: "battle-won" });
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 15, type: "battle-won" });
   });
 
   it("emits no node-specific event of its own — router visits produce only the generic virus-entered-node marker", () => {

@@ -57,15 +57,15 @@ describe("simulate — Scenario 1: Shortest Path, straight line", () => {
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 4,
-    coreHp: 100, // round number for hand-verifiable drain math: arrives tick 21, +10 ticks @10hp/tick drain
+    coreHp: 100, // round number for hand-verifiable drain math: arrives tick 21, +ceil(100/15)=7 ticks @15hp/tick drain
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 1, virus: baseVirus("shortest-path"), defense: graph };
 
-  it("reaches core at tick 21 then drains its 100 HP to win at tick 30", () => {
+  it("reaches core at tick 21 then drains its 100 HP to win at tick 27", () => {
     const log = simulate(input);
     expect(log.result.winner).toBe("attacker");
     expect(log.events).toContainEqual(expect.objectContaining({ tick: 21, type: "virus-entered-node", target: expect.any(String) }));
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 30, type: "battle-won" });
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 27, type: "battle-won" });
     assertPlausibleBattleLog(log, graph);
   });
 
@@ -140,15 +140,15 @@ describe("simulate — Scenario 3: Backtrack, distance-weighted routing", () => 
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 6,
-    coreHp: 100, // arrives tick 43, +10 ticks @10hp/tick drain
+    coreHp: 100, // arrives tick 43, +ceil(100/15)=7 ticks @15hp/tick drain
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 3, virus: baseVirus("backtrack"), defense: graph };
 
-  it("takes the shorter-DU indirect route (arrives tick 43) rather than the direct 2000du edge, then drains Core to win at tick 52", () => {
+  it("takes the shorter-DU indirect route (arrives tick 43) rather than the direct 2000du edge, then drains Core to win at tick 49", () => {
     const log = simulate(input);
     expect(log.result.winner).toBe("attacker");
     expect(log.events).toContainEqual(expect.objectContaining({ tick: 43, type: "virus-entered-node" }));
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 52, type: "battle-won" });
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 49, type: "battle-won" });
     // 4 node-entries total: entry -> A -> B -> C -> core.
     expect(log.events.filter((event) => event.type === "virus-entered-node")).toHaveLength(5);
     assertPlausibleBattleLog(log, graph);

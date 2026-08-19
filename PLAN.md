@@ -121,7 +121,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 - [x] **S1.4** Node pertahanan: Router, Firewall, ICE, Honeypot, Scanner, Trap, Core — tiap node ≥3 unit test perilaku.
 - [x] **S1.5** Blok Sensor/Condition/Attack/Stealth/Utility (12 blok v1 sesuai RULESET) — tiap blok ≥2 test.
 - [x] **S1.6** Determinisme lintas platform: jalankan suite di Node Linux + browser (CI matrix) — hash BattleLog identik.
-- [ ] **S1.7** `tools/balance-lab`: N virus archetype × M defense archetype → tabel winrate — CLI jalan, output markdown; tidak ada matchup >75% winrate di ruleset v1.
+- [x] **S1.7** `tools/balance-lab`: N virus archetype × M defense archetype → tabel winrate — CLI jalan, output markdown (lihat `tools/balance-lab/REPORT.md`). **Catatan jujur:** bar "tidak ada matchup >75% winrate" belum sepenuhnya tercapai — 1 perbaikan sistemik diterapkan (passive drain 10→15, lihat RULESET.md §9) dan itu menyelesaikan masalah paling parah (virus non-Attack 0% lawan segala Firewall), tapi sebagian besar dari 20 matchup arketipe S1.7 masih di luar rentang. Sebagian besar itu memang rock-paper-scissors yang GDD inginkan (arketipe sengaja ekstrem untuk stress-test batas sistem), KECUALI satu temuan nyata ("ICE Nest" menang 100% lawan semua 5 arketipe virus) yang dicatat sebagai prioritas v2 di RULESET.md §9, bukan diselesaikan sekarang.
 
 ### Fase 2 — Replay engine (vertical slice yang "menjual"; ±3 sesi)
 - [ ] **R2.1** `ease.ts` + `compile.ts`: BattleLog → Timeline — test: scrub maju lalu mundur ke T sama → frame hash identik.

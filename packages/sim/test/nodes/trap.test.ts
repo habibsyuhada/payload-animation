@@ -40,10 +40,10 @@ describe("Trap — engine integration", () => {
   it("does not block movement — the virus departs on the very next tick, same as any pass-through node", () => {
     const log = simulate(input);
     // core is 200du away at speed 50 -> 4 more ticks: departs tick 5, arrives tick 9, then core
-    // (coreHp 100) drains 10 ticks -> wins tick 18.
+    // (coreHp 100) drains ceil(100/15)=7 ticks -> wins tick 15.
     expect(log.result.winner).toBe("attacker");
     expect(log.events).toContainEqual(expect.objectContaining({ tick: 9, type: "virus-entered-node", target: "4" }));
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 18, type: "battle-won" });
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 15, type: "battle-won" });
   });
 
   it("only ever fires once — a random-walk virus that revisits an already-spent trap takes no further damage", () => {

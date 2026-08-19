@@ -71,6 +71,6 @@ describe("IF Integrity < X% — engine integration (gates the following Exploit 
     };
     const log = simulate(input);
     // firewall I has 500 HP; exploit I deals 250 one-shot on arrival, on top of the passive drain.
-    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -260 }));
+    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -265 }));
   });
 });

@@ -67,6 +67,14 @@ export default [
     },
   },
   {
+    // Node-target code (CLI tools, future server) — everything else in the monorepo runs
+    // browser-portable (packages/sim, packages/replay) or via bundler globals (apps/client).
+    files: ["tools/*/src/**/*.ts", "apps/server/src/**/*.ts"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly" },
+    },
+  },
+  {
     ignores: ["**/dist/**", "**/node_modules/**", "**/.turbo/**"],
   },
 ];

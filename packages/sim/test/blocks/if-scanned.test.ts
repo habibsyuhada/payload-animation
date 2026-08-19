@@ -46,8 +46,8 @@ describe("IF Scanned — engine integration (gates Brute Force to only apply whi
     const log = simulate(input);
     // scanner and firewall are both hop-distance 1 from... scanner applies status same tick as
     // arrival (both in range immediately), so brute-force (40/tick) should show up alongside the
-    // passive drain (10/tick) for -50 total on at least one node-damaged event against node 3.
-    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -50 }));
+    // passive drain (15/tick) for -55 total on at least one node-damaged event against node 3.
+    expect(log.events).toContainEqual(expect.objectContaining({ type: "node-damaged", target: "3", delta: -55 }));
   });
 
   it("never applies Brute Force damage without a Scanner in range to grant the status", () => {
@@ -59,7 +59,8 @@ describe("IF Scanned — engine integration (gates Brute Force to only apply whi
       defense: noScanner,
     };
     const log = simulate(input);
+    // plain 15/tick passive drain (or less on the final partial tick), never -55 (brute-force).
     const firewallDamageEvents = log.events.filter((event) => event.type === "node-damaged" && event.target === "3");
-    expect(firewallDamageEvents.every((event) => event.delta === -10)).toBe(true);
+    expect(firewallDamageEvents.every((event) => (event.delta ?? 0) >= -15)).toBe(true);
   });
 });
