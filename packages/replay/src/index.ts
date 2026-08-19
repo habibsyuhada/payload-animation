@@ -7,3 +7,5 @@ export * from "./ease.js";
 export * from "./compile.js";
 export * from "./camera.js";
 export * from "./draw.js";
+export * from "./gif.js";
+export * from "./export.js";

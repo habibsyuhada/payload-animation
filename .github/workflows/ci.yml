@@ -46,6 +46,8 @@ jobs:
     # S1.6: proves packages/sim's simulate() produces a byte-identical BattleLog (hashed —
     # test/determinism.test.ts) on a real browser engine, not just Node. Separate job from
     # lint-test-build so installing Playwright's Chromium doesn't slow down the fast path.
+    # Also runs packages/replay's export.ts tests (R2.5) — real MediaRecorder/WebM encoding,
+    # same "needs an actual browser, not just Node" reason, same `pnpm test:browser` task.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,5 +65,5 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @payload/sim exec playwright install --with-deps chromium
 
-      - name: Run packages/sim's tests in Chromium
+      - name: Run cross-platform / browser-only tests in Chromium
         run: pnpm test:browser

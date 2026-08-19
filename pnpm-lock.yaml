@@ -93,6 +93,12 @@ importers:
         specifier: workspace:*
         version: link:../sim
     devDependencies:
+      '@vitest/browser':
+        specifier: ^3.2.7
+        version: 3.2.7(playwright@1.62.1)(vite@7.3.6(@types/node@22.20.1))(vitest@3.2.7)
+      playwright:
+        specifier: ^1.49.0
+        version: 1.62.1
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

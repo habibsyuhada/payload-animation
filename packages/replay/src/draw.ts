@@ -58,6 +58,11 @@ const NODE_RADIUS: Record<DefenseNodeType, number> = {
   core: 22,
 };
 
+/** GDD §11: "gelap (near-black biru)" — also the erase color every frame draws over (see
+ * `drawFrame`), instead of leaving the canvas transparent, so an exported frame (R2.5) always has
+ * real background pixels for a WebM/GIF encoder to read instead of holes. */
+const BACKGROUND_COLOR = "#12141c";
+
 const VIRUS_COLOR = "#eaf6ff";
 const VIRUS_RADIUS = 7;
 const WOBBLE_AMPLITUDE_PX = 3;
@@ -228,7 +233,9 @@ function drawVirus(timeline: Timeline, t: number, ctx: DrawContext2D): void {
 
 /** Pure function of (timeline, T) — same inputs always produce the same sequence of draw calls. */
 export function drawFrame(timeline: Timeline, t: number, ctx: DrawContext2D): void {
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = BACKGROUND_COLOR;
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   drawEdges(timeline, ctx);
   drawNodes(timeline, t, ctx);
   drawVirus(timeline, t, ctx);

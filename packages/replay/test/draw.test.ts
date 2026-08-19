@@ -136,12 +136,14 @@ describe("drawFrame", () => {
     expect(forwardFrameAt05.length).toBeGreaterThan(0); // sanity: forward playback did draw something
   });
 
-  it("clears the canvas and draws every static node once per frame", () => {
+  it("fills an opaque background and draws every static node once per frame", () => {
     const timeline = buildTimeline();
     const ctx = new RecordingContext();
     drawFrame(timeline, 0, ctx);
-    expect(ctx.calls[0]!.op).toBe("clearRect");
+    // an opaque fillRect, not clearRect — R2.5's export needs real pixels, not transparency.
+    expect(ctx.calls[0]!.op).toBe("fillRect");
     expect(ctx.calls[0]!.args.slice(0, 4)).toEqual([0, 0, 800, 600]);
+    expect((ctx.calls[0]!.args[4] as { fillStyle: string }).fillStyle).toBe("#12141c");
     const arcCalls = ctx.calls.filter((call) => call.op === "arc");
     // 5 nodes + the virus itself, at minimum (trail/effects can add more).
     expect(arcCalls.length).toBeGreaterThanOrEqual(GRAPH.nodes.length + 1);
