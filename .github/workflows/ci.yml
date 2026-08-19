@@ -31,6 +31,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Install Playwright Chromium
+        # packages/ui's tests render real DOM via @vitest/browser (ADR 0003) — every `pnpm test`
+        # run needs Chromium, not just the separate S1.6 determinism-cross-platform job below.
+        run: pnpm --filter @payload/ui exec playwright install --with-deps chromium
+
       - name: Test
         run: pnpm test
 

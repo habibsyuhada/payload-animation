@@ -34,6 +34,10 @@ export default [
     },
     rules: {
       ...tseslint.configs.recommended.rules,
+      // TypeScript itself already flags genuine undefined names (and does it correctly for
+      // ambient/global types like DOM lib's `Element`/`JSX`, which `no-undef` can't see) — see
+      // typescript-eslint's own guidance to disable this rule in .ts/.tsx files.
+      "no-undef": "off",
       "boundaries/element-types": [
         "error",
         {
@@ -72,6 +76,13 @@ export default [
     files: ["tools/*/src/**/*.ts", "apps/server/src/**/*.ts"],
     languageOptions: {
       globals: { process: "readonly", console: "readonly" },
+    },
+  },
+  {
+    // packages/ui is the one package with an actual DOM/JSX target (ADR 0003).
+    files: ["packages/ui/src/**/*.tsx", "packages/ui/test/**/*.tsx"],
+    languageOptions: {
+      parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
   {

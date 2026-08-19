@@ -3,6 +3,7 @@ dist/
 .turbo/
 *.tsbuildinfo
 coverage/
+__screenshots__/
 .DS_Store
 *.log
 .env
