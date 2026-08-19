@@ -116,7 +116,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 
 ### Fase 1 — Sim engine (jantung; ±3–4 sesi)
 - [x] **S1.1** Types + PRNG + fixed-point helpers — property test: PRNG sequence identik lintas run.
-- [ ] **S1.2** Graph & validasi topologi (setiap Entry punya jalur ke Core; budget node) — unit test kasus valid/invalid.
+- [x] **S1.2** Graph & validasi topologi (setiap Entry punya jalur ke Core; budget node) — unit test kasus valid/invalid.
 - [ ] **S1.3** Engine tick loop + movement blocks (Shortest Path, Random Walk seeded, Backtrack) — golden log test: 3 skenario di-freeze sebagai snapshot.
 - [ ] **S1.4** Node pertahanan: Router, Firewall, ICE, Honeypot, Scanner, Trap, Core — tiap node ≥3 unit test perilaku.
 - [ ] **S1.5** Blok Sensor/Condition/Attack/Stealth/Utility (12 blok v1 sesuai RULESET) — tiap blok ≥2 test.
