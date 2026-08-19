@@ -1,5 +1,5 @@
 import { BATTLE_TICK_LIMIT } from "./fixed.js";
-import type { AccountTierConfig, BlockTier, DefenseNodeType, Ruleset } from "./types.js";
+import type { AccountTierConfig, BlockTier, DefenseNodeType, MovementBlockKind, Ruleset } from "./types.js";
 
 /**
  * Numeric source of truth mirrored from docs/RULESET.md §1 (budgets) and §5.2 (Core HP).
@@ -68,4 +68,25 @@ export function getDefenseNodeCost(type: DefenseNodeType, tier?: BlockTier): num
     throw new Error(`no v1 defense node cost for type "${type}" tier ${tier ?? "(untiered)"}`);
   }
   return entry.costPoints;
+}
+
+interface MovementBlockConfig {
+  readonly kind: MovementBlockKind;
+  readonly weightKb: number;
+  readonly speedDuPerTick: number;
+}
+
+/** Movement block weight/speed, RULESET.md §3. Untiered by design (v1). */
+const MOVEMENT_BLOCKS_V1: readonly MovementBlockConfig[] = [
+  { kind: "shortest-path", weightKb: 800, speedDuPerTick: 50 },
+  { kind: "random-walk", weightKb: 500, speedDuPerTick: 55 },
+  { kind: "backtrack", weightKb: 600, speedDuPerTick: 50 },
+];
+
+export function getMovementBlockConfig(kind: MovementBlockKind): MovementBlockConfig {
+  const entry = MOVEMENT_BLOCKS_V1.find((candidate) => candidate.kind === kind);
+  if (!entry) {
+    throw new Error(`no v1 movement block config for kind "${kind}"`);
+  }
+  return entry;
 }

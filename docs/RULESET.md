@@ -24,8 +24,11 @@
   replay yang halus (`packages/replay`). Ini murni representasi geometris — **semua angka
   gameplay di dokumen ini (HP, damage, budget, DU) adalah nilai "de-scaled" yang langsung dipakai
   logic tick**; skala ×1000 posisi tidak pernah masuk ke rumus damage/HP.
-- **RNG:** satu PRNG seeded per battle (`rng.ts`, mulberry32/xoshiro — S1.1). Urutan draw per
-  tick FIXED (bagian dari determinisme, wajib diikuti implementasi S1.3/S1.4):
+- **RNG:** satu PRNG seeded per battle (`rng.ts`, mulberry32/xoshiro — S1.1). Urutan draw FIXED
+  (bagian dari determinisme, wajib diikuti implementasi S1.3/S1.4):
+  0. **Sebelum tick 0:** pemilihan Entry — draw tunggal `nextInt(entryNodeIds.length)` untuk
+     menentukan node Entry mana yang dipakai virus (posisi Entry "ditentukan sistem" per GDD §5;
+     ini bagaimana sistem itu diimplementasikan, bukan pilihan pemain). Lihat ADR 0001.
   1. Movement block yang butuh RNG (`Random Walk`) — hanya jika virus berada di persimpangan
      dan harus memilih edge tick ini.
   2. `ICE Sentry` accuracy roll, diurutkan menaik berdasarkan `node id`, untuk setiap ICE Sentry
@@ -70,9 +73,9 @@ Wajib pilih tepat satu. Tidak bertier (fungsi sederhana, sengaja tanpa progressi
 
 | Blok | Weight (KB) | Speed (DU/tick) | Perilaku |
 |---|---|---|---|
-| Shortest Path | 800 | 50 | BFS deterministik ke Core, selalu pilih edge di jalur terpendek. Tidak pakai RNG. |
+| Shortest Path | 800 | 50 | Dijkstra deterministik ke Core, dibobot **total jarak DU** (bukan jumlah hop) — selaras dengan §5.2 "jarak adalah sumber daya desain": edge panjang tetap bisa jadi rute tercepat kalau hop count-nya lebih sedikit dari alternatif pendek-tapi-berliku, dan sebaliknya. Tidak pakai RNG. |
 | Random Walk (seeded) | 500 | 55 | Pilih edge acak (PRNG per-battle) di antara edge valid dari node saat ini; tidak revisit edge yang sudah dilalui dari node yang sama kecuali buntu (semua edge keluar sudah dicoba). |
-| Backtrack | 600 | 50 | Seperti Shortest Path, tapi jika node tujuan berikutnya adalah Trap/Honeypot yang sudah terdeteksi Sensor, mundur ke node sebelumnya dan ambil jalur terpendek alternatif (menghindari node yang baru terdeteksi). |
+| Backtrack | 600 | 50 | Seperti Shortest Path (Dijkstra berbobot DU yang sama), tapi jika node tujuan berikutnya adalah Trap/Honeypot yang sudah terdeteksi Sensor, mundur ke node sebelumnya dan ambil jalur terpendek alternatif yang menghindari node tsb. |
 
 `Avoid Scanned` (GDD §4.2) **ditunda ke v2** — di luar kuota S1.3.
 

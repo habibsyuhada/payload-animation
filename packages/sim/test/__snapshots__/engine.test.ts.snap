@@ -1,0 +1,341 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`simulate — Scenario 1: Shortest Path, straight line > matches the frozen golden log 1`] = `
+{
+  "events": [
+    {
+      "actor": "virus",
+      "target": "2",
+      "tick": 0,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "3",
+      "tick": 8,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "4",
+      "tick": 21,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "tick": 21,
+      "type": "battle-won",
+    },
+  ],
+  "input": {
+    "defense": {
+      "coreNodeId": 4,
+      "edges": [
+        {
+          "from": 1,
+          "lengthDu": 400,
+          "to": 3,
+        },
+        {
+          "from": 2,
+          "lengthDu": 400,
+          "to": 3,
+        },
+        {
+          "from": 3,
+          "lengthDu": 600,
+          "to": 4,
+        },
+      ],
+      "entryNodeIds": [
+        1,
+        2,
+      ],
+      "nodes": [
+        {
+          "id": 1,
+          "type": "entry",
+        },
+        {
+          "id": 2,
+          "type": "entry",
+        },
+        {
+          "id": 3,
+          "type": "router",
+        },
+        {
+          "id": 4,
+          "type": "core",
+        },
+      ],
+    },
+    "rulesetVersion": "v1",
+    "seed": 1,
+    "virus": {
+      "blocks": [],
+      "movement": {
+        "kind": "shortest-path",
+      },
+    },
+  },
+  "result": {
+    "score": {
+      "coreRatioPermille": 0,
+      "integrityRatioPermille": 1000,
+      "nodesDestroyed": 0,
+      "timeBonus": 294,
+      "value": 1094,
+    },
+    "winner": "attacker",
+  },
+}
+`;
+
+exports[`simulate — Scenario 2: Random Walk, branching graph with a cycle > matches the frozen golden log 1`] = `
+{
+  "events": [
+    {
+      "actor": "virus",
+      "target": "1",
+      "tick": 0,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "3",
+      "tick": 6,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "5",
+      "tick": 13,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "6",
+      "tick": 20,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "tick": 20,
+      "type": "battle-won",
+    },
+  ],
+  "input": {
+    "defense": {
+      "coreNodeId": 6,
+      "edges": [
+        {
+          "from": 1,
+          "lengthDu": 300,
+          "to": 3,
+        },
+        {
+          "from": 2,
+          "lengthDu": 300,
+          "to": 4,
+        },
+        {
+          "from": 3,
+          "lengthDu": 300,
+          "to": 4,
+        },
+        {
+          "from": 3,
+          "lengthDu": 300,
+          "to": 5,
+        },
+        {
+          "from": 4,
+          "lengthDu": 300,
+          "to": 5,
+        },
+        {
+          "from": 5,
+          "lengthDu": 300,
+          "to": 6,
+        },
+      ],
+      "entryNodeIds": [
+        1,
+        2,
+      ],
+      "nodes": [
+        {
+          "id": 1,
+          "type": "entry",
+        },
+        {
+          "id": 2,
+          "type": "entry",
+        },
+        {
+          "id": 3,
+          "type": "router",
+        },
+        {
+          "id": 4,
+          "type": "router",
+        },
+        {
+          "id": 5,
+          "type": "router",
+        },
+        {
+          "id": 6,
+          "type": "core",
+        },
+      ],
+    },
+    "rulesetVersion": "v1",
+    "seed": 7,
+    "virus": {
+      "blocks": [],
+      "movement": {
+        "kind": "random-walk",
+      },
+    },
+  },
+  "result": {
+    "score": {
+      "coreRatioPermille": 0,
+      "integrityRatioPermille": 1000,
+      "nodesDestroyed": 0,
+      "timeBonus": 295,
+      "value": 1095,
+    },
+    "winner": "attacker",
+  },
+}
+`;
+
+exports[`simulate — Scenario 3: Backtrack, distance-weighted routing > matches the frozen golden log 1`] = `
+{
+  "events": [
+    {
+      "actor": "virus",
+      "target": "1",
+      "tick": 0,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "3",
+      "tick": 10,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "4",
+      "tick": 21,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "5",
+      "tick": 32,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "6",
+      "tick": 43,
+      "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "tick": 43,
+      "type": "battle-won",
+    },
+  ],
+  "input": {
+    "defense": {
+      "coreNodeId": 6,
+      "edges": [
+        {
+          "from": 1,
+          "lengthDu": 500,
+          "to": 3,
+        },
+        {
+          "from": 2,
+          "lengthDu": 500,
+          "to": 3,
+        },
+        {
+          "from": 3,
+          "lengthDu": 500,
+          "to": 4,
+        },
+        {
+          "from": 4,
+          "lengthDu": 500,
+          "to": 5,
+        },
+        {
+          "from": 5,
+          "lengthDu": 500,
+          "to": 6,
+        },
+        {
+          "from": 3,
+          "lengthDu": 2000,
+          "to": 6,
+        },
+      ],
+      "entryNodeIds": [
+        1,
+        2,
+      ],
+      "nodes": [
+        {
+          "id": 1,
+          "type": "entry",
+        },
+        {
+          "id": 2,
+          "type": "entry",
+        },
+        {
+          "id": 3,
+          "type": "router",
+        },
+        {
+          "id": 4,
+          "type": "router",
+        },
+        {
+          "id": 5,
+          "type": "router",
+        },
+        {
+          "id": 6,
+          "type": "core",
+        },
+      ],
+    },
+    "rulesetVersion": "v1",
+    "seed": 3,
+    "virus": {
+      "blocks": [],
+      "movement": {
+        "kind": "backtrack",
+      },
+    },
+  },
+  "result": {
+    "score": {
+      "coreRatioPermille": 0,
+      "integrityRatioPermille": 1000,
+      "nodesDestroyed": 0,
+      "timeBonus": 289,
+      "value": 1089,
+    },
+    "winner": "attacker",
+  },
+}
+`;

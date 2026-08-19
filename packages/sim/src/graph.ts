@@ -24,38 +24,84 @@ export function buildAdjacency(graph: DefenseGraph): Map<number, number[]> {
   return adjacency;
 }
 
-/** BFS shortest path (by hop count) between two nodes; null if unreachable. */
-export function shortestPath(graph: DefenseGraph, fromId: number, toId: number): number[] | null {
+export interface ShortestPathOptions {
+  /** Nodes to route around (e.g. Backtrack avoiding a detected Trap/Honeypot) — never excludes toId itself. */
+  readonly avoid?: ReadonlySet<number>;
+}
+
+interface WeightedEdge {
+  readonly to: number;
+  readonly weight: number;
+}
+
+function buildWeightedAdjacency(graph: DefenseGraph): Map<number, WeightedEdge[]> {
+  const adjacency = new Map<number, WeightedEdge[]>();
+  for (const node of graph.nodes) {
+    adjacency.set(node.id, []);
+  }
+  for (const edge of graph.edges) {
+    if (!adjacency.has(edge.from) || !adjacency.has(edge.to)) {
+      continue;
+    }
+    adjacency.get(edge.from)!.push({ to: edge.to, weight: edge.lengthDu });
+    adjacency.get(edge.to)!.push({ to: edge.from, weight: edge.lengthDu });
+  }
+  return adjacency;
+}
+
+/** Sentinel for "no known finite distance yet" — kept a real integer, never a float, per PLAN §0. */
+const UNREACHABLE_DISTANCE = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Dijkstra shortest path weighted by edge.lengthDu (total DU distance, not hop count) — DU length
+ * is a deliberate defensive design lever (GDD §5.2, "jarak adalah sumber daya desain"), so the
+ * Shortest Path movement block has to actually respond to it. Null if unreachable.
+ */
+export function shortestPath(
+  graph: DefenseGraph,
+  fromId: number,
+  toId: number,
+  options?: ShortestPathOptions,
+): number[] | null {
   if (fromId === toId) {
     return [fromId];
   }
-  const adjacency = buildAdjacency(graph);
+  const adjacency = buildWeightedAdjacency(graph);
   if (!adjacency.has(fromId) || !adjacency.has(toId)) {
     return null;
   }
+  const avoid = options?.avoid;
 
+  const dist = new Map<number, number>([[fromId, 0]]);
   const cameFrom = new Map<number, number>();
-  const visited = new Set<number>([fromId]);
-  const queue: number[] = [fromId];
-  let head = 0;
+  const visited = new Set<number>();
 
-  while (head < queue.length) {
-    const current = queue[head]!;
-    head += 1;
-    if (current === toId) {
+  for (;;) {
+    let current: number | undefined;
+    let currentDist = UNREACHABLE_DISTANCE;
+    for (const [nodeId, nodeDist] of dist) {
+      if (!visited.has(nodeId) && nodeDist < currentDist) {
+        current = nodeId;
+        currentDist = nodeDist;
+      }
+    }
+    if (current === undefined || current === toId) {
       break;
     }
-    for (const neighbor of adjacency.get(current) ?? []) {
-      if (visited.has(neighbor)) {
+    visited.add(current);
+    for (const { to, weight } of adjacency.get(current) ?? []) {
+      if (visited.has(to) || (avoid?.has(to) && to !== toId)) {
         continue;
       }
-      visited.add(neighbor);
-      cameFrom.set(neighbor, current);
-      queue.push(neighbor);
+      const candidateDist = currentDist + weight;
+      if (candidateDist < (dist.get(to) ?? UNREACHABLE_DISTANCE)) {
+        dist.set(to, candidateDist);
+        cameFrom.set(to, current);
+      }
     }
   }
 
-  if (!visited.has(toId)) {
+  if (!dist.has(toId)) {
     return null;
   }
 
