@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // apps/client is a leaf app bundled by Vite (vite build), not a workspace library other
+    // packages import — no .js/.d.ts emission needed, typecheck runs `tsc --noEmit` for checking only.
+    "noEmit": true
+  },
+  "include": ["src", "capacitor.config.ts"]
+}

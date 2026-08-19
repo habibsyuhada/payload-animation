@@ -1,0 +1,21 @@
+{
+  "name": "@payload/balance-lab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint src test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "report": "pnpm build && node dist/cli.js"
+  },
+  "dependencies": {
+    "@payload/sim": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Only export.ts (R2.5) actually needs DOM types (HTMLCanvasElement, MediaRecorder) — it's
+    // the one file in this package that's unapologetically browser-only. draw.ts/compile.ts stay
+    // DOM-free on their own merits (DrawContext2D is a hand-rolled interface, not the lib's
+    // CanvasRenderingContext2D); this just makes DOM types available, it doesn't require using them.
+    "lib": ["ES2022", "DOM"],
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}
