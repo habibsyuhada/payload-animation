@@ -110,9 +110,9 @@ Setiap fase = beberapa sesi Claude Code. Format task: `[ID] deskripsi — accept
 Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test hijau → update checklist di bawah → commit dengan pesan `feat(scope): [ID] …`.
 
 ### Fase 0 — Fondasi repo (±1 sesi)
-- [ ] **F0.1** Scaffold monorepo pnpm+turbo, tsconfig strict, eslint+boundaries, vitest — `pnpm test` & `pnpm build` hijau di repo kosong.
-- [ ] **F0.2** CI GitHub Actions: lint+test+build di tiap PR — badge hijau.
-- [ ] **F0.3** Tulis `docs/RULESET.md` v1: seluruh angka dari GDD (§4–6) dalam tabel + formula damage — direview manual sebelum lanjut.
+- [x] **F0.1** Scaffold monorepo pnpm+turbo, tsconfig strict, eslint+boundaries, vitest — `pnpm test` & `pnpm build` hijau di repo kosong.
+- [x] **F0.2** CI GitHub Actions: lint+test+build di tiap PR — badge hijau.
+- [ ] **F0.3** Tulis `docs/RULESET.md` v1: seluruh angka dari GDD (§4–6) dalam tabel + formula damage — direview manual sebelum lanjut. **Blocked:** `docs/GDD.md` belum ada di repo — perlu diskusi/isi dulu sebelum sesi ini bisa jalan.
 
 ### Fase 1 — Sim engine (jantung; ±3–4 sesi)
 - [ ] **S1.1** Types + PRNG + fixed-point helpers — property test: PRNG sequence identik lintas run.
