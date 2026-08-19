@@ -61,3 +61,43 @@ body {
   max-width: 40rem;
   line-height: 1.5;
 }
+
+.payload-budget-track {
+  height: 0.75rem;
+  background: var(--color-background-panel);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.payload-budget-fill {
+  height: 100%;
+  transition: width 0.15s ease-out;
+}
+
+.payload-chain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.payload-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--color-background-panel);
+  border-radius: 0.25rem;
+}
+
+.payload-chain-label {
+  flex: 1;
+  color: var(--color-text);
+}
+
+.payload-movement-option {
+  display: block;
+  padding: 0.2rem 0;
+}
