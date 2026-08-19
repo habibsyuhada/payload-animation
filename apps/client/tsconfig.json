@@ -5,8 +5,7 @@
     "jsx": "react-jsx",
     // apps/client is a leaf app bundled by Vite (vite build), not a workspace library other
     // packages import — no .js/.d.ts emission needed, typecheck runs `tsc --noEmit` for checking only.
-    "noEmit": true,
-    "rootDir": "src"
+    "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src", "capacitor.config.ts"]
 }
