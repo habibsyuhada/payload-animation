@@ -124,7 +124,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 - [x] **S1.7** `tools/balance-lab`: N virus archetype × M defense archetype → tabel winrate — CLI jalan, output markdown (lihat `tools/balance-lab/REPORT.md`). **Catatan jujur:** bar "tidak ada matchup >75% winrate" belum sepenuhnya tercapai — 1 perbaikan sistemik diterapkan (passive drain 10→15, lihat RULESET.md §9) dan itu menyelesaikan masalah paling parah (virus non-Attack 0% lawan segala Firewall), tapi sebagian besar dari 20 matchup arketipe S1.7 masih di luar rentang. Sebagian besar itu memang rock-paper-scissors yang GDD inginkan (arketipe sengaja ekstrem untuk stress-test batas sistem), KECUALI satu temuan nyata ("ICE Nest" menang 100% lawan semua 5 arketipe virus) yang dicatat sebagai prioritas v2 di RULESET.md §9, bukan diselesaikan sekarang.
 
 ### Fase 2 — Replay engine (vertical slice yang "menjual"; ±3 sesi)
-- [ ] **R2.1** `ease.ts` + `compile.ts`: BattleLog → Timeline — test: scrub maju lalu mundur ke T sama → frame hash identik.
+- [x] **R2.1** `ease.ts` + `compile.ts`: BattleLog → Timeline — test: scrub maju lalu mundur ke T sama → frame hash identik.
 - [ ] **R2.2** `draw.ts`: bahasa visual penuh (paket+wobble+trail, tembakan ICE, crack firewall easeOutBack, trap, drain core, burst menang/kalah) — review visual manual dengan 5 golden log.
 - [ ] **R2.3** Kamera cue-based: intro→follow→slow-mo klimaks→outro; bisa dimatikan (mode overview utk scrub) — durasi cue dihitung dari log.
 - [ ] **R2.4** Komponen scrubber (packages/ui): bar+markers+speed+“momen kritis” — Playwright test interaksi.
