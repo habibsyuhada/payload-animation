@@ -36,3 +36,27 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  determinism-cross-platform:
+    # S1.6: proves packages/sim's simulate() produces a byte-identical BattleLog (hashed —
+    # test/determinism.test.ts) on a real browser engine, not just Node. Separate job from
+    # lint-test-build so installing Playwright's Chromium doesn't slow down the fast path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @payload/sim exec playwright install --with-deps chromium
+
+      - name: Run packages/sim's tests in Chromium
+        run: pnpm test:browser

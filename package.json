@@ -10,6 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
+    "test:browser": "turbo run test:browser",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "ci": "turbo run lint typecheck test build"

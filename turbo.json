@@ -9,6 +9,11 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "test:browser": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "env": ["PLAYWRIGHT_CHROMIUM_PATH"]
+    },
     "lint": {
       "outputs": []
     },
