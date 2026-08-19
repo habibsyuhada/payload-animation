@@ -1,4 +1,4 @@
-import type { BattleEvent, BattleEventType, BattleLog } from "@payload/sim";
+import type { BattleEvent, BattleEventType, BattleLog, BlockTier, DefenseNodeType } from "@payload/sim";
 import { type EasingFn, linear, mix, mixVec2, type Vec2 } from "./ease.js";
 
 /**
@@ -35,10 +35,27 @@ export interface TimelineMarker {
   readonly t: number;
   readonly kind: TimelineMarkerKind;
   readonly label: string;
+  /** The node this marker is about, when it's about one (damage source, node destroyed, status target). */
+  readonly nodeId?: number;
+}
+
+/** A defense node's static (never-moving) render data — draw.ts needs this without a separate layout param. */
+export interface StaticNode {
+  readonly id: number;
+  readonly type: DefenseNodeType;
+  readonly tier?: BlockTier;
+  readonly position: Vec2;
+}
+
+export interface StaticEdge {
+  readonly from: number;
+  readonly to: number;
 }
 
 export interface Timeline {
   readonly durationSeconds: number;
+  readonly nodes: readonly StaticNode[];
+  readonly edges: readonly StaticEdge[];
   readonly tracks: readonly EntityTrack[];
   readonly markers: readonly TimelineMarker[];
 }
@@ -102,20 +119,44 @@ function describeEvent(event: BattleEvent): string {
   }
 }
 
-function compileMarkers(events: readonly BattleEvent[]): TimelineMarker[] {
+/**
+ * "virus-damaged" is about its damage SOURCE (event.actor); "node-damaged"/"node-destroyed" and
+ * decoy/status events are about their TARGET (for damage) or actor (for status/decoy) — whichever
+ * field names an actual defense node id. Neither field is a node id for "virus"/block-name actors
+ * like "self-repair" — Number(...) on those is NaN, so the id simply comes back undefined.
+ */
+function resolveMarkerNodeId(event: BattleEvent, nodeIds: ReadonlySet<number>): number | undefined {
+  const candidates = event.type === "virus-damaged" ? [event.actor] : [event.target, event.actor];
+  for (const candidate of candidates) {
+    const id = Number(candidate);
+    if (Number.isInteger(id) && nodeIds.has(id)) {
+      return id;
+    }
+  }
+  return undefined;
+}
+
+function compileMarkers(events: readonly BattleEvent[], nodeIds: ReadonlySet<number>): TimelineMarker[] {
   const markers: TimelineMarker[] = [];
   for (const event of events) {
     const kind = MARKER_KIND_BY_EVENT[event.type];
     if (!kind) {
       continue;
     }
-    markers.push({ t: event.tick * TICK_SECONDS, kind, label: describeEvent(event) });
+    const nodeId = resolveMarkerNodeId(event, nodeIds);
+    markers.push({ t: event.tick * TICK_SECONDS, kind, label: describeEvent(event), ...(nodeId !== undefined ? { nodeId } : {}) });
   }
   return markers;
 }
 
 export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
   const lastEvent = log.events[log.events.length - 1];
+  const staticNodes: StaticNode[] = log.input.defense.nodes.map((node) => ({
+    id: node.id,
+    type: node.type,
+    ...(node.tier !== undefined ? { tier: node.tier } : {}),
+    position: layoutPosition(layout, String(node.id)),
+  }));
   const virusTrack: EntityTrack = {
     id: "virus",
     position: compileVirusPositionTrack(log.events, layout),
@@ -123,8 +164,10 @@ export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
   };
   return {
     durationSeconds: (lastEvent?.tick ?? 0) * TICK_SECONDS,
+    nodes: staticNodes,
+    edges: log.input.defense.edges.map((edge) => ({ from: edge.from, to: edge.to })),
     tracks: [virusTrack],
-    markers: compileMarkers(log.events),
+    markers: compileMarkers(log.events, new Set(staticNodes.map((node) => node.id))),
   };
 }
 
@@ -164,4 +207,8 @@ export function sampleOpacity(track: EntityTrack, t: number): number {
 
 export function findTrack(timeline: Timeline, id: string): EntityTrack | undefined {
   return timeline.tracks.find((track) => track.id === id);
+}
+
+export function findNode(timeline: Timeline, id: number | undefined): StaticNode | undefined {
+  return id === undefined ? undefined : timeline.nodes.find((node) => node.id === id);
 }

@@ -60,6 +60,23 @@ describe("compileTimeline", () => {
     const timeline = compileTimeline(log, LAYOUT);
     expect(timeline.markers).toContainEqual(expect.objectContaining({ kind: "won" }));
   });
+
+  it("carries a static node entry (with layout position) for every defense node", () => {
+    const log = simulate(INPUT);
+    const timeline = compileTimeline(log, LAYOUT);
+    expect(timeline.nodes).toHaveLength(GRAPH.nodes.length);
+    expect(timeline.nodes).toContainEqual({ id: 3, type: "router", position: LAYOUT.positions[3] });
+    expect(timeline.nodes).toContainEqual({ id: 4, type: "core", position: LAYOUT.positions[4] });
+  });
+
+  it("resolves a damage marker's nodeId to its source node (the firewall, not 'virus')", () => {
+    const firewallGraph: DefenseGraph = { ...GRAPH, nodes: GRAPH.nodes.map((node) => (node.id === 3 ? { ...node, type: "firewall" as const, tier: 1 as const } : node)) };
+    const log = simulate({ ...INPUT, virus: { movement: { kind: "shortest-path" }, blocks: [] }, defense: firewallGraph });
+    const timeline = compileTimeline(log, LAYOUT);
+    const damageMarkers = timeline.markers.filter((marker) => marker.kind === "damage");
+    expect(damageMarkers.length).toBeGreaterThan(0);
+    expect(damageMarkers.every((marker) => marker.nodeId === 3)).toBe(true);
+  });
 });
 
 describe("samplePosition", () => {

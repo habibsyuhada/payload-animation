@@ -125,7 +125,7 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 
 ### Fase 2 — Replay engine (vertical slice yang "menjual"; ±3 sesi)
 - [x] **R2.1** `ease.ts` + `compile.ts`: BattleLog → Timeline — test: scrub maju lalu mundur ke T sama → frame hash identik.
-- [ ] **R2.2** `draw.ts`: bahasa visual penuh (paket+wobble+trail, tembakan ICE, crack firewall easeOutBack, trap, drain core, burst menang/kalah) — review visual manual dengan 5 golden log.
+- [x] **R2.2** `draw.ts`: bahasa visual penuh (paket+wobble+trail, tembakan ICE, crack firewall easeOutBack, trap, drain core, burst menang/kalah) — review visual manual dengan 5 golden log. **Catatan:** `drawFrame(timeline, T, ctx)` murni fungsi (timeline, T) lewat `DrawContext2D` custom (bukan lib DOM), diverifikasi determinism + scrub-safety di test; 5 golden log (clean win, firewall breach, ICE gauntlet, trap/honeypot, timeout stalemate) dirender ke PNG contact-sheet via `@napi-rs/canvas` (tool preview sekali-pakai, bukan dependency package) dan dikirim untuk review manual.
 - [ ] **R2.3** Kamera cue-based: intro→follow→slow-mo klimaks→outro; bisa dimatikan (mode overview utk scrub) — durasi cue dihitung dari log.
 - [ ] **R2.4** Komponen scrubber (packages/ui): bar+markers+speed+“momen kritis” — Playwright test interaksi.
 - [ ] **R2.5** `export.ts`: render offscreen → WebM (MediaRecorder) + fallback GIF — file valid terputar di device uji.
