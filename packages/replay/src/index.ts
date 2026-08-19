@@ -5,4 +5,5 @@ export const compatibleSimVersion = SIM_PACKAGE_VERSION;
 
 export * from "./ease.js";
 export * from "./compile.js";
+export * from "./camera.js";
 export * from "./draw.js";
