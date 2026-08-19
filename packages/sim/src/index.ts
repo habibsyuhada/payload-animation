@@ -6,4 +6,5 @@ export * from "./fixed.js";
 export * from "./ruleset.js";
 export * from "./graph.js";
 export * from "./movement.js";
+export * from "./nodes/index.js";
 export * from "./engine.js";

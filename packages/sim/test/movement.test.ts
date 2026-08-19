@@ -29,6 +29,7 @@ function distanceVsHopGraph(): DefenseGraph {
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 6,
+    coreHp: 1000,
   };
 }
 
@@ -53,6 +54,7 @@ function diamondGraph(): DefenseGraph {
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 4,
+    coreHp: 1000,
   };
 }
 
@@ -113,6 +115,7 @@ describe("backtrack movement", () => {
       ],
       entryNodeIds: [1, 2],
       coreNodeId: 4,
+      coreHp: 1000,
     };
     const ctx = { graph, rng: createRng(1), triedEdgesFromNode: new Map(), knownHazardNodeIds: new Set<number>([10]) };
     expect(MOVEMENT_ALGORITHMS.backtrack(3, ctx)).toEqual({ toNodeId: 10 });

@@ -3,10 +3,12 @@ import { simulate } from "../src/engine.js";
 import type { BattleInput, BattleLog, DefenseGraph, DefenseNode } from "../src/types.js";
 
 /**
- * S1.3 scope note (see docs/ADR/0001): no node combat or logic blocks exist yet, so every
- * scenario below deliberately uses only entry/router/core nodes — Firewall/ICE/Honeypot/
- * Scanner/Trap don't have real behavior until S1.4, and testing "through" them here would just
- * exercise Router-like pass-through, which is misleading to freeze as a golden log.
+ * These 3 scenarios were S1.3's golden logs (movement-only, Core arrival = instant win). S1.4
+ * gives Core real HP (a passive 10/tick drain once occupied, RULESET.md §5.0), so reaching Core
+ * now takes ceil(coreHp/10) further ticks instead of ending the battle immediately — the tick
+ * counts below were recomputed accordingly and the snapshots regenerated. They still avoid
+ * Firewall/ICE/Honeypot/Scanner/Trap so movement stays the only variable under test here; those
+ * node types get their own dedicated tests in test/nodes/.
  */
 
 function baseVirus(movementKind: BattleInput["virus"]["movement"]["kind"]): BattleInput["virus"] {
@@ -34,7 +36,7 @@ function assertPlausibleBattleLog(log: BattleLog, graph: DefenseGraph): void {
   if (log.result.winner === "attacker") {
     expect(last.type).toBe("battle-won");
   } else {
-    expect(last.type).toBe("battle-timeout");
+    expect(["battle-timeout", "virus-died"]).toContain(last.type);
   }
 }
 
@@ -55,13 +57,15 @@ describe("simulate — Scenario 1: Shortest Path, straight line", () => {
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 4,
+    coreHp: 100, // round number for hand-verifiable drain math: arrives tick 21, +10 ticks @10hp/tick drain
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 1, virus: baseVirus("shortest-path"), defense: graph };
 
-  it("reaches core in exactly 21 ticks regardless of which entry is chosen", () => {
+  it("reaches core at tick 21 then drains its 100 HP to win at tick 30", () => {
     const log = simulate(input);
     expect(log.result.winner).toBe("attacker");
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 21, type: "battle-won" });
+    expect(log.events).toContainEqual(expect.objectContaining({ tick: 21, type: "virus-entered-node", target: expect.any(String) }));
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 30, type: "battle-won" });
     assertPlausibleBattleLog(log, graph);
   });
 
@@ -96,6 +100,7 @@ describe("simulate — Scenario 2: Random Walk, branching graph with a cycle", (
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 6,
+    coreHp: 100,
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 7, virus: baseVirus("random-walk"), defense: graph };
 
@@ -135,13 +140,15 @@ describe("simulate — Scenario 3: Backtrack, distance-weighted routing", () => 
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 6,
+    coreHp: 100, // arrives tick 43, +10 ticks @10hp/tick drain
   };
   const input: BattleInput = { rulesetVersion: "v1", seed: 3, virus: baseVirus("backtrack"), defense: graph };
 
-  it("takes the shorter-DU indirect route (43 ticks) rather than the direct 2000du edge", () => {
+  it("takes the shorter-DU indirect route (arrives tick 43) rather than the direct 2000du edge, then drains Core to win at tick 52", () => {
     const log = simulate(input);
     expect(log.result.winner).toBe("attacker");
-    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 43, type: "battle-won" });
+    expect(log.events).toContainEqual(expect.objectContaining({ tick: 43, type: "virus-entered-node" }));
+    expect(log.events[log.events.length - 1]).toMatchObject({ tick: 52, type: "battle-won" });
     // 4 node-entries total: entry -> A -> B -> C -> core.
     expect(log.events.filter((event) => event.type === "virus-entered-node")).toHaveLength(5);
     assertPlausibleBattleLog(log, graph);
@@ -169,6 +176,7 @@ describe("simulate — timeout", () => {
       edges: [],
       entryNodeIds: [1, 2],
       coreNodeId: 3,
+      coreHp: 1800,
     };
     const input: BattleInput = { rulesetVersion: "v1", seed: 1, virus: baseVirus("shortest-path"), defense: graph };
     const log = simulate(input);

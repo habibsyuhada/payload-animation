@@ -122,6 +122,44 @@ export function isReachable(graph: DefenseGraph, fromId: number, toId: number): 
   return shortestPath(graph, fromId, toId) !== null;
 }
 
+/**
+ * Hop count (unweighted BFS) between two nodes — used for ICE Sentry/Scanner radius (RULESET.md
+ * §5.1 "radius R hop"), deliberately NOT the DU-weighted distance `shortestPath` uses for
+ * movement.
+ */
+export function hopDistance(graph: DefenseGraph, fromId: number, toId: number): number | null {
+  if (fromId === toId) {
+    return 0;
+  }
+  const adjacency = buildAdjacency(graph);
+  if (!adjacency.has(fromId) || !adjacency.has(toId)) {
+    return null;
+  }
+
+  const visited = new Set<number>([fromId]);
+  const queue: number[] = [fromId];
+  const distance = new Map<number, number>([[fromId, 0]]);
+  let head = 0;
+
+  while (head < queue.length) {
+    const current = queue[head]!;
+    head += 1;
+    if (current === toId) {
+      return distance.get(current)!;
+    }
+    for (const neighbor of adjacency.get(current) ?? []) {
+      if (visited.has(neighbor)) {
+        continue;
+      }
+      visited.add(neighbor);
+      distance.set(neighbor, distance.get(current)! + 1);
+      queue.push(neighbor);
+    }
+  }
+
+  return null;
+}
+
 export type GraphValidationErrorCode =
   | "duplicate-node-id"
   | "wrong-core-count"
@@ -132,7 +170,8 @@ export type GraphValidationErrorCode =
   | "self-loop-edge"
   | "edge-length-out-of-range"
   | "unreachable-entry"
-  | "budget-exceeded";
+  | "budget-exceeded"
+  | "core-hp-mismatch";
 
 export interface GraphValidationError {
   readonly code: GraphValidationErrorCode;
@@ -227,6 +266,13 @@ export function validateDefenseGraph(
     errors.push({
       code: "budget-exceeded",
       message: `defense node cost ${totalCost} exceeds account tier ${accountTier} budget of ${tierConfig.defenseBudgetPoints}`,
+    });
+  }
+
+  if (graph.coreHp !== tierConfig.coreHp) {
+    errors.push({
+      code: "core-hp-mismatch",
+      message: `coreHp ${graph.coreHp} does not match account tier ${accountTier}'s fixed Core HP of ${tierConfig.coreHp} (RULESET.md §5.2 — not player-adjustable)`,
     });
   }
 

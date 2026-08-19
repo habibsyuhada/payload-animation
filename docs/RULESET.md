@@ -288,10 +288,15 @@ Ditandai eksplisit supaya tidak dianggap final sebelum simulasi massal jalan:
 
 - [ ] Apakah archetype full-Stealth (Cloak+Slow Crawl, minim Attack) punya winrate wajar lawan
   defense heavy-ICE, atau under/overperform?
-- [ ] Apakah Firewall Tier III + counter-damage 45/tick terlalu keras untuk virus non-Attack
-  (lihat catatan feasibility §5.2 — didesain agar virus tanpa Attack blok "hampir mustahil"
-  menembus Firewall III; verifikasi ini bukan 100% mustahil di semua kombinasi Integrity/Self
-  Repair).
+- [x] ~~Apakah Firewall Tier III + counter-damage 45/tick terlalu keras untuk virus non-Attack~~
+  **Dikonfirmasi via simulasi S1.4** (`test/nodes/firewall.test.ts`): tanpa blok Attack (S1.5
+  belum ada), virus vs Firewall Tier I berakhir **seri persis** — virus mati tepat di tick yang
+  sama Firewall itu hancur (passive drain 10/tick × counter 20/tick = total 1000 damage = tepat
+  Integrity maksimum virus). Tier II/III (counter 30/45 per tick) jelas fatal lebih cepat dari
+  itu. Kesimpulan: di v1, **virus tanpa Attack blok tidak pernah benar-benar menembus Firewall
+  manapun dengan sisa HP** — cocok dengan intent desain, tapi berarti Self Repair (S1.5, +5–12
+  Integrity/tick) kemungkinan wajib dibawa untuk mengubah hasil seri jadi menang; perlu diverifikasi
+  ulang begitu Attack & Self Repair blocks ada (S1.5) sebelum S1.7 menilai winrate archetype.
 - [ ] Apakah Payload Budget v1 (2400–3600 KB) cukup longgar untuk minimal 2 archetype berbeda per
   tier akun, atau terlalu ketat sehingga loadout viable jadi seragam.
 - [ ] Kalibrasi accuracy ICE Sentry (850–900‰) — cek apakah efektif rendah karena radius kecil,

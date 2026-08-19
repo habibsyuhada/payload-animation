@@ -29,6 +29,7 @@ function baseGraph(overrides: Partial<DefenseGraph> = {}): DefenseGraph {
     ],
     entryNodeIds: [1, 2],
     coreNodeId: 5,
+    coreHp: 1800, // tier-1 (RULESET.md §5.2) — matches validateDefenseGraph(..., RULESET_V1, 1) below
     ...overrides,
   };
 }
@@ -196,5 +197,18 @@ describe("validateDefenseGraph — invalid cases", () => {
     const result = validateDefenseGraph(graph, RULESET_V1, 1);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.objectContaining({ code: "budget-exceeded" }));
+  });
+
+  it("flags coreHp that doesn't match the account tier's fixed value", () => {
+    const graph = baseGraph({ coreHp: 999 });
+    const result = validateDefenseGraph(graph, RULESET_V1, 1);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "core-hp-mismatch" }));
+  });
+
+  it("accepts coreHp matching a different account tier's value when validated at that tier", () => {
+    const graph = baseGraph({ coreHp: 2200 }); // tier-3's coreHp (RULESET.md §5.2)
+    const result = validateDefenseGraph(graph, RULESET_V1, 3);
+    expect(result).toEqual({ valid: true, errors: [] });
   });
 });

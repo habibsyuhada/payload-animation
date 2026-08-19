@@ -65,6 +65,8 @@ export interface DefenseGraph {
   readonly edges: readonly DefenseEdge[];
   readonly entryNodeIds: readonly number[];
   readonly coreNodeId: number;
+  /** Core's starting HP (RULESET.md §5.2) — account-tier-dependent, so it's baked in here rather than derived, keeping BattleInput self-contained/replayable. */
+  readonly coreHp: number;
 }
 
 export interface BattleInput {

@@ -90,3 +90,79 @@ export function getMovementBlockConfig(kind: MovementBlockKind): MovementBlockCo
   }
   return entry;
 }
+
+/** All Breach nodes (Firewall, Core) take this much HP loss per tick from mere occupancy, RULESET.md §5.0. */
+export const BREACH_PASSIVE_DRAIN_V1 = 10;
+
+interface FirewallConfig {
+  readonly tier: BlockTier;
+  readonly hp: number;
+  readonly counterDamagePerTick: number;
+}
+
+/** RULESET.md §5.1. */
+const FIREWALL_CONFIG_V1: readonly FirewallConfig[] = [
+  { tier: 1, hp: 500, counterDamagePerTick: 20 },
+  { tier: 2, hp: 800, counterDamagePerTick: 30 },
+  { tier: 3, hp: 1200, counterDamagePerTick: 45 },
+];
+
+export function getFirewallConfig(tier: BlockTier): FirewallConfig {
+  const entry = FIREWALL_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 firewall config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface IceSentryConfig {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly fireIntervalTicks: number;
+  readonly damage: number;
+  readonly accuracyPermille: number;
+}
+
+/** RULESET.md §5.1. */
+const ICE_SENTRY_CONFIG_V1: readonly IceSentryConfig[] = [
+  { tier: 1, radiusHops: 1, fireIntervalTicks: 4, damage: 60, accuracyPermille: 850 },
+  { tier: 2, radiusHops: 1, fireIntervalTicks: 3, damage: 85, accuracyPermille: 880 },
+  { tier: 3, radiusHops: 2, fireIntervalTicks: 3, damage: 115, accuracyPermille: 900 },
+];
+
+export function getIceSentryConfig(tier: BlockTier): IceSentryConfig {
+  const entry = ICE_SENTRY_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 ICE Sentry config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface ScannerConfig {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly durationTicks: number;
+  readonly iceAccuracyBonusPermille: number;
+}
+
+/** RULESET.md §5.1. */
+const SCANNER_CONFIG_V1: readonly ScannerConfig[] = [
+  { tier: 1, radiusHops: 1, durationTicks: 6, iceAccuracyBonusPermille: 150 },
+  { tier: 2, radiusHops: 2, durationTicks: 8, iceAccuracyBonusPermille: 200 },
+  { tier: 3, radiusHops: 2, durationTicks: 10, iceAccuracyBonusPermille: 250 },
+];
+
+export function getScannerConfig(tier: BlockTier): ScannerConfig {
+  const entry = SCANNER_CONFIG_V1.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v1 scanner config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const TRAP_DAMAGE_V1: Readonly<Record<BlockTier, number>> = { 1: 180, 2: 260, 3: 350 };
+
+/** RULESET.md §5.1. */
+export function getTrapDamage(tier: BlockTier): number {
+  return TRAP_DAMAGE_V1[tier];
+}
