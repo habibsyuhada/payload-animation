@@ -85,6 +85,7 @@ export interface BattleInput {
 
 export type BattleEventType =
   | "virus-entered-node"
+  | "virus-departed-node"
   | "virus-damaged"
   | "virus-repaired"
   | "virus-died"

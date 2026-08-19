@@ -11,9 +11,21 @@ exports[`simulate — Scenario 1: Shortest Path, straight line > matches the fro
     },
     {
       "actor": "virus",
+      "target": "2",
+      "tick": 0,
+      "type": "virus-departed-node",
+    },
+    {
+      "actor": "virus",
       "target": "3",
       "tick": 8,
       "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "3",
+      "tick": 9,
+      "type": "virus-departed-node",
     },
     {
       "actor": "virus",
@@ -153,15 +165,33 @@ exports[`simulate — Scenario 2: Random Walk, branching graph with a cycle > ma
     },
     {
       "actor": "virus",
+      "target": "1",
+      "tick": 0,
+      "type": "virus-departed-node",
+    },
+    {
+      "actor": "virus",
       "target": "3",
       "tick": 6,
       "type": "virus-entered-node",
     },
     {
       "actor": "virus",
+      "target": "3",
+      "tick": 7,
+      "type": "virus-departed-node",
+    },
+    {
+      "actor": "virus",
       "target": "5",
       "tick": 13,
       "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "5",
+      "tick": 14,
+      "type": "virus-departed-node",
     },
     {
       "actor": "virus",
@@ -324,9 +354,21 @@ exports[`simulate — Scenario 3: Backtrack, distance-weighted routing > matches
     },
     {
       "actor": "virus",
+      "target": "1",
+      "tick": 0,
+      "type": "virus-departed-node",
+    },
+    {
+      "actor": "virus",
       "target": "3",
       "tick": 10,
       "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "3",
+      "tick": 11,
+      "type": "virus-departed-node",
     },
     {
       "actor": "virus",
@@ -336,9 +378,21 @@ exports[`simulate — Scenario 3: Backtrack, distance-weighted routing > matches
     },
     {
       "actor": "virus",
+      "target": "4",
+      "tick": 22,
+      "type": "virus-departed-node",
+    },
+    {
+      "actor": "virus",
       "target": "5",
       "tick": 32,
       "type": "virus-entered-node",
+    },
+    {
+      "actor": "virus",
+      "target": "5",
+      "tick": 33,
+      "type": "virus-departed-node",
     },
     {
       "actor": "virus",

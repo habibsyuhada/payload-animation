@@ -33,7 +33,7 @@ describe("Router — engine integration", () => {
     expect(log.events[log.events.length - 1]).toMatchObject({ tick: 15, type: "battle-won" });
   });
 
-  it("emits no node-specific event of its own — router visits produce only the generic virus-entered-node marker", () => {
+  it("emits no node-specific event of its own — router visits produce only the generic movement markers", () => {
     const graph: DefenseGraph = {
       nodes: [
         { id: 1, type: "entry" },
@@ -52,7 +52,10 @@ describe("Router — engine integration", () => {
     };
     const log = simulate({ rulesetVersion: "v1", seed: 1, virus: { movement: { kind: "shortest-path" }, blocks: [] }, defense: graph });
     const routerEvents = log.events.filter((event) => event.actor === "3" || event.target === "3");
-    expect(routerEvents).toEqual([expect.objectContaining({ type: "virus-entered-node", target: "3" })]);
+    expect(routerEvents).toEqual([
+      expect.objectContaining({ type: "virus-entered-node", target: "3" }),
+      expect.objectContaining({ type: "virus-departed-node", target: "3" }),
+    ]);
   });
 
   it("a revisited Entry node is equally inert — no special effect fires even if random-walk loops back through it", () => {

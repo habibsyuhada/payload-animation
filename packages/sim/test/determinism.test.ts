@@ -142,9 +142,9 @@ const SCENARIO_TIMEOUT: BattleInput = {
 
 describe("cross-platform determinism (S1.6)", () => {
   it.each([
-    ["movement-only", SCENARIO_MOVEMENT_ONLY, "67c3151a"],
-    ["random-walk", SCENARIO_RANDOM_WALK, "4cf75c6a"],
-    ["full-combat", SCENARIO_FULL_COMBAT, "030c3fd7"],
+    ["movement-only", SCENARIO_MOVEMENT_ONLY, "ecc90372"],
+    ["random-walk", SCENARIO_RANDOM_WALK, "575a36b9"],
+    ["full-combat", SCENARIO_FULL_COMBAT, "4f0505d5"],
     ["timeout", SCENARIO_TIMEOUT, "552300e8"],
   ])("BattleLog hash for %s matches the frozen cross-platform value", (_name, input, expectedHash) => {
     expect(hashBattleLog(simulate(input))).toBe(expectedHash);

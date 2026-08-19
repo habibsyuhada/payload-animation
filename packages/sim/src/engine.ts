@@ -425,6 +425,7 @@ export function simulate(input: BattleInput): BattleLog {
       const decision = algorithm(location.nodeId, { graph, rng, triedEdgesFromNode, knownHazardNodeIds });
       if (decision) {
         const edgeLength = findEdgeLength(graph, location.nodeId, decision.toNodeId);
+        events.push({ tick, type: "virus-departed-node", actor: "virus", target: String(location.nodeId) });
         location = {
           kind: "edge",
           from: location.nodeId,
