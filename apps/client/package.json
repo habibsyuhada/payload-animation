@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "vite",
+    "build": "vite build",
     "test": "vitest run",
     "lint": "eslint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -13,10 +14,20 @@
     "@payload/replay": "workspace:*",
     "@payload/shared": "workspace:*",
     "@payload/sim": "workspace:*",
-    "@payload/ui": "workspace:*"
+    "@payload/ui": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/browser": "^3.2.7",
+    "playwright": "^1.49.0",
     "typescript": "^5.7.3",
+    "vite": "^6.0.3",
     "vitest": "^3.0.4"
   }
 }

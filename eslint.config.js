@@ -72,15 +72,15 @@ export default [
   },
   {
     // Node-target code (CLI tools, future server) — everything else in the monorepo runs
-    // browser-portable (packages/sim, packages/replay) or via bundler globals (apps/client).
+    // browser-portable (packages/sim, packages/replay) or is an actual browser app (apps/client, packages/ui).
     files: ["tools/*/src/**/*.ts", "apps/server/src/**/*.ts"],
     languageOptions: {
       globals: { process: "readonly", console: "readonly" },
     },
   },
   {
-    // packages/ui is the one package with an actual DOM/JSX target (ADR 0003).
-    files: ["packages/ui/src/**/*.tsx", "packages/ui/test/**/*.tsx"],
+    // packages/ui and apps/client have an actual DOM/JSX target (ADR 0003).
+    files: ["packages/ui/src/**/*.tsx", "packages/ui/test/**/*.tsx", "apps/client/src/**/*.tsx", "apps/client/test/**/*.tsx"],
     languageOptions: {
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
