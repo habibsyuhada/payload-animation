@@ -81,9 +81,10 @@ function ConditionChip({ rowId, condition }: { rowId: string; condition: Conditi
         data-testid="sheet-condition-negate"
         aria-pressed={condition.negate}
         aria-label={`Balik kondisi ${entry.label}`}
+        title="Balik kondisi ini (NOT)"
         onClick={() => updateCondition(rowId, condition.id, { negate: !condition.negate })}
       >
-        TIDAK
+        NOT
       </button>
       <span className="payload-sheet-chip-label">{entry.label}</span>
       {entry.takesNodeTypes && (
@@ -180,25 +181,31 @@ function SheetRowCard({ row, depth, index, siblingCount, onPick }: { row: RowIns
   return (
     <li className="payload-sheet-row" data-testid="sheet-row" data-depth={depth} style={{ marginLeft: depth * 16 }}>
       <div className="payload-sheet-card">
-        <div className="payload-sheet-conditions">
+        {/* Keyword, chips and the add button stack instead of sharing a line: on a 390px portrait
+        screen a three-column row squeezes every chip until its own label wraps mid-word. */}
+        <div className="payload-sheet-section">
           <span className="payload-sheet-keyword">{row.conditions.length === 0 ? "SELALU" : "JIKA"}</span>
-          <ul className="payload-sheet-chip-list">
-            {row.conditions.map((condition) => (
-              <ConditionChip key={condition.id} rowId={row.id} condition={condition} />
-            ))}
-          </ul>
+          {row.conditions.length > 0 && (
+            <ul className="payload-sheet-chip-list">
+              {row.conditions.map((condition) => (
+                <ConditionChip key={condition.id} rowId={row.id} condition={condition} />
+              ))}
+            </ul>
+          )}
           <button type="button" className="payload-sheet-add" data-testid="add-condition" onClick={() => onPick({ rowId: row.id, mode: "condition" })}>
             + kondisi
           </button>
         </div>
 
-        <div className="payload-sheet-actions">
+        <div className="payload-sheet-section">
           <span className="payload-sheet-keyword">MAKA</span>
-          <ul className="payload-sheet-chip-list">
-            {row.actions.map((action, actionIndex) => (
-              <ActionChip key={action.id} rowId={row.id} action={action} index={actionIndex} total={row.actions.length} />
-            ))}
-          </ul>
+          {row.actions.length > 0 && (
+            <ul className="payload-sheet-chip-list">
+              {row.actions.map((action, actionIndex) => (
+                <ActionChip key={action.id} rowId={row.id} action={action} index={actionIndex} total={row.actions.length} />
+              ))}
+            </ul>
+          )}
           <button type="button" className="payload-sheet-add" data-testid="add-action" onClick={() => onPick({ rowId: row.id, mode: "action" })}>
             + aksi
           </button>
