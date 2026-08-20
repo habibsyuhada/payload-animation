@@ -169,10 +169,10 @@ Alasannya ada di ADR 0006: model v1 tidak bisa mengekspresikan contoh GDD §4.2 
 urutan → battle 53 tick vs 124 tick). v1 dibekukan, bukan dihapus: log lama wajib tetap bisa
 diputar (DoD #3).
 
-- [ ] **V7.1** Tipe + engine v2 di `packages/sim`: `VirusProgram`, evaluasi depth-first per tick,
+- [x] **V7.1** Tipe + engine v2 di `packages/sim`: `VirusProgram`, evaluasi depth-first per tick,
       slot-vs-cumulative action, `once` scope, event `rule-fired`. `simulate()` dispatch by
       `rulesetVersion`; golden log v1 wajib tetap byte-identical.
-- [ ] **V7.2** Katalog kondisi/aksi + bobot KB per kondisi & per aksi (+ batas jumlah event per
+- [x] **V7.2** Katalog kondisi/aksi + bobot KB per kondisi & per aksi (+ batas jumlah event per
       account tier) di `docs/RULESET.md` v2.
 - [ ] **V7.3** Virus Lab ditulis ulang jadi editor event sheet tap-driven (bukan drag bebas),
       nesting maksimal 3 level.

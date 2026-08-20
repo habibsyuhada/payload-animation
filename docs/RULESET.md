@@ -1,5 +1,10 @@
-# PAYLOAD — Ruleset v1
+# PAYLOAD — Ruleset v1 & v2
 
+> §0–§9 adalah **ruleset v1** dan sudah **dibekukan**: setiap `BattleLog` bertanda `"v1"` wajib
+> tetap bisa diputar byte-identical (DoD #3), jadi angka di bagian itu tidak boleh diedit lagi.
+> **Ruleset v2 ada di §10–§12** — virus sebagai event sheet bersarang (`docs/ADR/0006`),
+> diimplementasi di `packages/sim/src/ruleset-v2.ts` + `engine-v2.ts`.
+>
 > Source of truth untuk semua angka gameplay. `packages/sim` HANYA boleh mengubah angka lewat
 > file ini + `packages/sim/src/rulesets/v1.json` (dibuat di S1.1) — tidak pernah hardcode di
 > logic. Menurunkan §4–6 dari `docs/GDD.md`. Lihat DoD #3 di `PLAN.md`.
@@ -339,3 +344,144 @@ untuk menguji batas sistem, bukan sampel "build rata-rata pemain" — sebagian s
 sini karena itu, bukan berarti ruleset v1 rusak menyeluruh. Perubahan angka lebih lanjut hasil
 temuan balance-lab **wajib** naik versi ruleset (`v1` → `v2`, dst.) sesuai DoD #3 begitu ada
 BattleLog nyata yang bergantung pada v1 — tidak lagi boleh diedit in-place setelah titik itu.
+
+---
+
+# Ruleset v2 — virus sebagai event sheet
+
+> Keputusan desainnya di `docs/ADR/0006-event-sheet-virus-programming.md`; bagian ini adalah
+> **angkanya**. Implementasi: `packages/sim/src/ruleset-v2.ts` (tabel), `sheet.ts` (bentuk, harga,
+> validasi), `engine-v2.ts` (evaluasi). v1 (§0–§9) dibekukan dan tetap jalan lewat `engine.ts`;
+> `simulate()` memilih engine dari `rulesetVersion` di input.
+>
+> Yang **tidak** berubah dari v1: satuan & determinisme (§0), atribut virus (§2), semua node
+> pertahanan (§5), skor (§8). Yang berubah: bahasa virusnya.
+
+## 10. Bentuk sheet, kondisi, dan aksi
+
+Satu virus v2 adalah `VirusProgram { events: SheetEvent[] }`. Satu `SheetEvent` (satu "baris") =
+sekumpulan **kondisi** (di-AND) → daftar **aksi** berurutan, plus **anak** yang hanya jalan kalau
+kondisi induknya lolos. Kondisi kosong = `selalu`. OR ditulis sebagai dua baris bersebelahan;
+NOT adalah flag `negate` per kondisi. Nesting maksimum **3 level** (root + 2).
+
+### 10.1 Kondisi
+
+Radius sensor dihitung dalam **hop graf**, bukan jarak DU — sama seperti radius node (§5.1).
+
+| Kondisi | Label editor | Tier | Weight (KB) | Radius (hop) | Arti |
+|---|---|---|---|---|---|
+| `node-here-is` | Node saat ini = … | — | 120 | — | Virus sedang berdiri di node bertipe X. Selalu false saat virus di tengah edge. |
+| `node-ahead-is` | Node di depan = … | — | 320 | — | Node tujuan berikutnya bertipe X: ujung jauh edge kalau sedang jalan, hop pertama jalur terpendek ke Core kalau sedang diam. |
+| `honeypot-near` | Ada Honeypot dekat | I | 350 | 1 | Honeypot yang belum terpicu ada dalam radius. |
+| | | II | 450 | 2 | |
+| | | III | 550 | 3 | + tetap terlihat meski Honeypot menyamar sebagai Core (§5.1 Honeypot II). |
+| `trap-near` | Ada Trap dekat | I | 400 | 1 | Trap yang belum meledak ada dalam radius. |
+| | | II | 500 | 2 | |
+| | | III | 600 | 3 | |
+| `integrity-below` | Integrity < X% | — | 150 | — | Threshold bebas 0–1000‰ (default 500‰). |
+| `is-scanned` | Sedang "scanned" | — | 130 | — | Status dari Scanner (§5.1) sedang aktif. |
+| `took-damage-last-tick` | Baru kena damage | — | 90 | — | Virus kehilangan Integrity pada tick yang **baru saja** selesai. Namanya menyebut tick lalu karena sheet dievaluasi sebelum damage tick ini masuk (§11) — menyebut "tick ini" akan bohong. |
+| `on-breach-node` | Di atas Breach Node | — | 90 | — | Sedang occupy Firewall hidup atau Core (§5.0). |
+| `at-node` | Sedang di node | — | 60 | — | Berdiri di node, bukan menyeberang edge. |
+
+Kondisi yang di v1 tiernya cuma membeli **konfigurabilitas** (mis. "IF Integrity < X%" II/III yang
+melebarkan rentang threshold) jadi satu harga datar: di v2 threshold-nya angka yang diketik pemain,
+dan menagih biaya untuk sebuah angka sama dengan menagih untuk apa-apa.
+
+### 10.2 Aksi
+
+**Slot** = hanya satu yang berlaku per tick, pemenangnya penulis **pertama** (baris paling atas —
+lihat ADR 0006 §3, sengaja beda dari GDevelop yang last-wins). **Kumulatif** = semua yang jalan
+tick itu menumpuk.
+
+| Aksi | Label editor | Slot | Tier | Weight (KB) | Efek |
+|---|---|---|---|---|---|
+| `move-toward-core` | Jalan ke Core | movement | — | 800 | Jalur terpendek berbobot DU (Dijkstra). Speed 50 DU/tick. |
+| `move-avoiding-hazards` | Jalan memutari bahaya | movement | — | 600 | Jalur terpendek yang menghindari node bahaya yang **terlihat oleh kondisi sensor di sheet ini**; jatuh kembali ke jalur biasa kalau tidak ada rute lain. Speed 50. |
+| `move-random` | Jalan acak | movement | — | 500 | Edge acak (seeded) dari node saat ini; tak mengulang kecuali buntu. Speed 55. |
+| `move-back` | Mundur | movement | — | 300 | Balik ke node yang barusan ditinggalkan. Tidak melakukan apa-apa kalau tidak ada / bukan tetangga. Speed 50. |
+| `hold-position` | Diam di tempat | movement | — | 100 | Menahan slot gerak: baris di bawahnya tidak bisa memindahkan virus tick ini. |
+| `brute-force` | Brute Force | kumulatif | I/II/III | 700 / 900 / 1100 | +40 / +60 / +85 damage per tick ke Breach Node yang di-occupy. |
+| `exploit` | Exploit | kumulatif | I/II/III | 650 / 800 / 950 | 250 / 380 / 520 one-shot, **hanya pada tick pertama** virus berdiri di sebuah node. Pasangkan dengan `once: "node"` supaya tidak menyala lagi saat kembali ke node yang sama. |
+| `overload` | Overload | kumulatif | I/II/III | 750 / 950 / 1150 | Saat Breach Node hancur tick ini: splash 150 / 230 / 320 ke Breach Node dalam 1 / 1 / 2 hop. |
+| `cloak` | Cloak | slot cloak | I/II/III | 500 / 650 / 800 | Kebal status "scanned" & bukan target ICE Sentry selama **30 / 45 / 60 tick**, lalu cooldown **90 tick** dihitung dari saat status habis. |
+| `slow-crawl` | Slow Crawl | slot slow-crawl | I/II/III | 300 / 380 / 460 | Tick ini: speed ×700‰ / 750‰ / 800‰, akurasi ICE Sentry −300‰ / −400‰ / −500‰. |
+| `self-repair` | Self Repair | kumulatif | I/II/III | 450 / 550 / 650 | +5 / +8 / +12 Integrity. **Tanpa syarat tersembunyi** — gerbang v1 ("tidak kena damage", "tidak di Breach Node") sekarang baris yang ditulis pemain sendiri. |
+| `arm-decoy` | Pasang Decoy | slot decoy | I/II/III | 400 / 500 / 600 | Menyiapkan 1 aktivasi yang menyerap 1 / 1 / 2 trigger berikutnya (tembakan ICE, Honeypot, Trap — bukan counter-damage Firewall). Maksimum 1 / 2 / 3 aktivasi per battle; tidak bisa dipasang selama aktivasi sebelumnya masih punya sisa serapan. |
+
+### 10.3 `once` — sekali-jalan
+
+Properti per baris, menggantikan bookkeeping per-blok v1 (`exploitedNodeIds` dulu hidup di dalam
+engine):
+
+| `once` | Baris boleh jalan lagi kalau… |
+|---|---|
+| `"battle"` | tidak pernah — sekali per battle. |
+| `"node"` | virus sedang di node dengan id berbeda. |
+| `"arrival"` | virus tiba di sebuah node lagi (kunjungan ulang ke node yang sama pun me-reset). |
+
+Kuota terpakai saat baris **jalan**, bukan saat efeknya mendarat — kalau tidak, one-shot yang
+damage-nya kebetulan ter-clamp akan diam-diam mengisi ulang dirinya sendiri.
+
+### 10.4 Dua perubahan mekanik (bukan sekadar ganti kemasan)
+
+1. **Cloak berbasis tick + cooldown.** §9 sudah mencatat model per-node itu bermasalah dari dua
+   arah: di peta 4 node ia menutupi seluruh perjalanan, tapi berhenti membantu justru saat virus
+   diam lama di satu Firewall. Basis tick memperbaiki keduanya; cooldown-nya yang mencegah
+   `[selalu] → Cloak` jadi tembus pandang permanen seharga 500 KB.
+2. **Deteksi tidak lagi memberi kekebalan.** Di v1, membawa Detect Honeypot otomatis membuat
+   Honeypot tidak mematikan. Di v2 sensor adalah **kondisi**: ia memberi tahu, sheet yang
+   memutuskan. Selamat dari Honeypot berarti sheet-nya benar-benar memutar (`[ada Honeypot dekat]
+   → jalan memutari bahaya`), persis contoh GDD §4.2.
+
+## 11. Urutan resolusi per tick (engine v2)
+
+Menggantikan §7 untuk battle v2. Urutan fase node-nya sama dengan v1 (ADR 0001 tidak berubah);
+yang berubah adalah **siapa yang memutuskan** di tiap fase.
+
+1. **Sensor sweep** — kumpulkan node bahaya yang terlihat oleh kondisi sensor yang benar-benar ada
+   di sheet ini (sheet tanpa sensor tidak membayar apa pun di sini).
+2. **Evaluasi sheet** — depth-first, atas→bawah. Induk yang gagal melewati kondisinya melewatkan
+   aksinya **dan seluruh anaknya**. Evaluasi sendiri **tidak pernah menarik RNG** (§0), jadi
+   menambah satu baris kondisi tidak menggeser dadu.
+3. **Status** — Cloak / Slow Crawl berlaku **sebelum** ada yang menembak, supaya baris yang
+   memasang Cloak sebagai reaksi terlindungi pada tick yang sama.
+4. **Efek node** — Attack kumulatif ke Breach Node yang di-occupy → counter-damage Firewall →
+   tembakan ICE Sentry (RNG draw) → trigger Honeypot/Trap (hanya tick pertama di node itu) →
+   aura Scanner.
+5. **Utility** — Self Repair, pemasangan decoy.
+6. **Gerak** — niat gerak pemenang slot dikonsumsi **di akhir tick**, jadi virus yang baru tiba
+   selalu dapat satu tick penuh untuk bertindak di sana sebelum boleh pergi. Niat yang ditulis
+   saat virus masih di tengah edge **diantre** (yang terakhir menang) dan dipakai saat tiba hanya
+   kalau sheet tidak menulis niat baru pada tick kedatangan itu.
+7. **`rule-fired`** untuk tiap baris yang aksinya benar-benar berefek tick ini, diurutkan stabil
+   per id baris — lalu cek menang/kalah/timeout persis seperti §7 langkah 7.
+
+Id yang dibawa `rule-fired` adalah `id` yang ditulis penulis sheet, atau — kalau tidak ada —
+alamat barisnya (`"2.0.1"`). Itulah yang dipakai replay untuk menyalakan chip aturan yang menembak.
+
+## 12. Budget, batas, dan validasi sheet
+
+Payload budget & Defense budget per account tier sama persis dengan §1. Tambahannya:
+
+| Account tier | Payload (KB) | Maks. baris event |
+|---|---|---|
+| 1 | 2400 | 12 |
+| 2 | 2700 | 16 |
+| 3 | 3000 | 20 |
+| 4 | 3300 | 24 |
+| 5 | 3600 | 28 |
+
+- **Biaya sheet** = Σ weight kondisi + Σ weight aksi + **40 KB per baris**. Bobot per baris itu
+  yang membuat sepuluh aturan satu-baris lebih mahal daripada satu aturan dengan sepuluh aksi.
+- **Nesting gratis** — kedalaman itu alat keterbacaan, bukan sumber daya.
+- **Batas jumlah baris** di tabel atas menghitung baris bersarang juga. Ia ada di atas budget KB
+  supaya beban evaluasi server tetap terbatas berapa pun murahnya isi sebuah baris.
+- **Batas aksi per tick = 32**, jaring pengaman di belakang batas jumlah baris.
+- **Kedalaman maksimum 3 level.** Batas keterbacaan layar portrait 390px (GDD §3), bukan batas
+  teknis.
+
+`validateVirusProgram()` menolak (error): nesting > 3, jumlah baris > kuota tier, biaya > budget
+payload, threshold di luar 0–1000‰. Ia **memperingatkan tapi tidak menolak**: sheet kosong, sheet
+tanpa satu pun aksi gerak (legal — virusnya diam di Entry sampai timeout), dan baris yang tidak
+punya kondisi, aksi, maupun anak.
