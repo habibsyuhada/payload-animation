@@ -32,10 +32,12 @@ async function findByTestId(testId: string): Promise<Element> {
   });
 }
 
-const SCREENS: readonly { label: string; title: string }[] = [
+const SCREENS: readonly { label: string; title: string; fullBleed?: boolean }[] = [
   { label: "HQ", title: "HQ / Home" },
   { label: "Virus Lab", title: "Virus Lab" },
-  { label: "Defense", title: "Defense Grid" },
+  // Defense Grid is a full-bleed canvas editor (toolbar + HUD, no <h1> — see Screen's fullBleed
+  // prop): the app header still carries its title, but its own body text no longer does.
+  { label: "Defense", title: "Defense Grid", fullBleed: true },
   { label: "Scan", title: "Scan / Attack" },
   { label: "Replay", title: "Replay Player" },
   { label: "Research", title: "Research" },
@@ -59,7 +61,9 @@ describe("App navigation", () => {
       await findByTestId("app-header");
       await page.getByRole("link", { name: target.label }).click();
       const screen = await findByTestId(`screen-${target.title}`);
-      expect(screen.textContent).toContain(target.title);
+      if (!target.fullBleed) {
+        expect(screen.textContent).toContain(target.title);
+      }
       const header = await findByTestId("app-header");
       expect(header.textContent).toBe(target.title);
     });

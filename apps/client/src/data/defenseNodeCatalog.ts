@@ -11,24 +11,31 @@ import type { DefenseNodeType } from "@payload/sim";
  * the boundaries rule (eslint.config.js) forbids `app`/`ui` code reaching into `replay`'s
  * internals, and `draw.ts`'s NODE_COLOR was never exported as public API anyway.
  */
+/** A silhouette a node type renders as on the grid — distinct per type so nodes read apart by
+ * shape alone, not just fill color (color still carries category/faction meaning on top). */
+export type NodeShape = "circle" | "diamond" | "triangle" | "triangle-down" | "square" | "hexagon" | "octagon" | "star";
+
 export interface DefenseNodeCatalogEntry {
   readonly type: Exclude<DefenseNodeType, "entry" | "core">;
   readonly label: string;
   readonly tiered: boolean;
   readonly color: string;
+  readonly shape: NodeShape;
 }
 
 export const PLACEABLE_NODE_CATALOG: readonly DefenseNodeCatalogEntry[] = [
-  { type: "router", label: "Router", tiered: false, color: "#5b6478" },
-  { type: "firewall", label: "Firewall", tiered: true, color: "#e0555a" },
-  { type: "ice-sentry", label: "ICE Sentry", tiered: true, color: "#5ac8e6" },
-  { type: "honeypot", label: "Honeypot", tiered: true, color: "#e0c15a" },
-  { type: "scanner", label: "Scanner", tiered: true, color: "#b05ae0" },
-  { type: "trap", label: "Trap Node", tiered: true, color: "#e05a9c" },
+  { type: "router", label: "Router", tiered: false, color: "#5b6478", shape: "circle" },
+  { type: "firewall", label: "Firewall", tiered: true, color: "#e0555a", shape: "square" },
+  { type: "ice-sentry", label: "ICE Sentry", tiered: true, color: "#5ac8e6", shape: "hexagon" },
+  { type: "honeypot", label: "Honeypot", tiered: true, color: "#e0c15a", shape: "star" },
+  { type: "scanner", label: "Scanner", tiered: true, color: "#b05ae0", shape: "octagon" },
+  { type: "trap", label: "Trap Node", tiered: true, color: "#e05a9c", shape: "triangle-down" },
 ];
 
 export const ENTRY_COLOR = "#7fd8a0";
 export const CORE_COLOR = "#ffd75a";
+export const ENTRY_SHAPE: NodeShape = "triangle";
+export const CORE_SHAPE: NodeShape = "diamond";
 
 export function findPlaceableEntry(type: Exclude<DefenseNodeType, "entry" | "core">): DefenseNodeCatalogEntry {
   const entry = PLACEABLE_NODE_CATALOG.find((candidate) => candidate.type === type);

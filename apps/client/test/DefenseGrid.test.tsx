@@ -63,19 +63,19 @@ function clickCanvasAt(x: number, y: number): void {
   canvas.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX, clientY }));
 }
 
-/** Drags a palette button (matched by its visible label, e.g. "Router (1pt+)") and releases it
- * over the canvas at the given viewBox coordinates — mirrors the component's own pointer-capture
- * based drag (pointerdown arms the type + captures the pointer, pointerup — wherever the pointer
- * physically ended up, canvas or not — places it). See clickCanvasAt for the coordinate math. */
-function dragPaletteNodeTo(label: string, x: number, y: number): void {
-  const paletteButton = page.getByText(label).element();
-  const canvas = page.getByTestId("grid-canvas").element() as SVGSVGElement;
-  const rect = canvas.getBoundingClientRect();
-  const clientX = rect.left + x * (rect.width / VIEWBOX_WIDTH);
-  const clientY = rect.top + y * (rect.height / VIEWBOX_HEIGHT);
-
-  paletteButton.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10, pointerId: 5 }));
-  paletteButton.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX, clientY, pointerId: 5 }));
+/** Opens the Node tool's picker modal, clicks the entry matching `label` (e.g. "Router",
+ * "Firewall" — the modal card's own text, not the old inline palette button's "Label (Npt+)"
+ * text), and waits for the modal to close — mirroring the real flow: pick a type, then tap the
+ * grid (clickCanvasAt) to actually place it. */
+async function armNodeViaModal(label: string): Promise<void> {
+  await page.getByTestId("tool-node").click();
+  await findByTestId("node-modal");
+  await page.getByText(label).click();
+  await vi.waitFor(() => {
+    if (page.getByTestId("node-modal").query()) {
+      throw new Error("node-picker modal is still open");
+    }
+  });
 }
 
 /** Drags the empty canvas background (a point away from every fixed node) by a client-pixel
@@ -96,6 +96,14 @@ function nodeGroup(id: number): SVGGElement {
   return document.querySelector(`[data-node-id="${id}"]`) as SVGGElement;
 }
 
+/** Nodes render as different SVG shapes (circle/rect/polygon) depending on type — see NodeGlyph
+ * in DefenseGrid.tsx — so tests read a node's world position off the group's own data-node-x/y
+ * (set directly from the store's node.x/y) rather than parsing shape-specific geometry attrs. */
+function nodePosition(id: number): { x: number; y: number } {
+  const group = nodeGroup(id);
+  return { x: Number(group.getAttribute("data-node-x")), y: Number(group.getAttribute("data-node-y")) };
+}
+
 function tapNode(id: number): void {
   const group = nodeGroup(id);
   group.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 1, clientY: 1, pointerId: 1 }));
@@ -112,10 +120,12 @@ function dragNode(id: number, dxClient: number, dyClient: number): void {
 }
 
 describe("DefenseGrid", () => {
-  it("starts with exactly 3 fixed nodes (2 Entry + 1 Core) and no edges", async () => {
+  it("starts with exactly 3 fixed nodes (2 Entry + 1 Core), no edges, and the Hand tool active", async () => {
     await waitForNodeCount(3);
     const edges = page.getByTestId("grid-edge").elements();
     expect(edges).toHaveLength(0);
+    const handTool = (await findByTestId("tool-hand")) as HTMLButtonElement;
+    expect(handTool.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("reports an unreachable-entry validation error initially (no edges at all)", async () => {
@@ -123,65 +133,71 @@ describe("DefenseGrid", () => {
     expect(panel.textContent).toContain("has no path to core");
   });
 
-  it("places a new node on the canvas after picking a palette type and clicking", async () => {
-    await page.getByText("Router (1pt+)").click();
+  it("places a new node on the canvas after arming a type via the Node-tool picker and tapping the grid", async () => {
+    await armNodeViaModal("Router");
     clickCanvasAt(250, 250);
     await waitForNodeCount(4);
     const budgetText = await findByTestId("defense-budget-text");
     expect(budgetText.textContent).toContain("1 / 20 pt");
   });
 
-  it("places a new node by dragging its palette button and dropping it on the canvas", async () => {
-    dragPaletteNodeTo("Router (1pt+)", 250, 250);
+  it("keeps the Node tool armed after placing (stamp mode), so tapping again places another of the same type", async () => {
+    await armNodeViaModal("Router");
+    clickCanvasAt(200, 200);
     await waitForNodeCount(4);
+    clickCanvasAt(320, 320);
+    await waitForNodeCount(5);
     const budgetText = await findByTestId("defense-budget-text");
-    expect(budgetText.textContent).toContain("1 / 20 pt");
+    expect(budgetText.textContent).toContain("2 / 20 pt");
+  });
+
+  it("switching to the Hand or Line tool disarms the Node tool", async () => {
+    await armNodeViaModal("Router");
+    await findByTestId("armed-strip");
+    await page.getByTestId("tool-hand").click();
+    expect(page.getByTestId("armed-strip").elements()).toHaveLength(0);
   });
 
   it("pans the camera by dragging the empty background, shifting where new nodes land on-screen", async () => {
-    await page.getByText("Router (1pt+)").click();
+    await armNodeViaModal("Router");
     clickCanvasAt(250, 250);
     await waitForNodeCount(4);
-    const firstCircle = page.getByTestId("grid-node").elements().at(-1)!.querySelector("circle")!;
-    const firstX = Number(firstCircle.getAttribute("cx"));
-    const firstY = Number(firstCircle.getAttribute("cy"));
-    expect(Math.abs(firstX - 250)).toBeLessThanOrEqual(2);
-    expect(Math.abs(firstY - 250)).toBeLessThanOrEqual(2);
+    const first = nodePosition(4);
+    expect(Math.abs(first.x - 250)).toBeLessThanOrEqual(2);
+    expect(Math.abs(first.y - 250)).toBeLessThanOrEqual(2);
 
     dragBackgroundBy(-120, -60);
 
-    await page.getByText("Firewall (3pt+)").click();
+    await armNodeViaModal("Firewall");
     clickCanvasAt(250, 250); // same screen spot as before — should now land at a different world point
     await waitForNodeCount(5);
-    const secondCircle = page.getByTestId("grid-node").elements().at(-1)!.querySelector("circle")!;
-    const secondX = Number(secondCircle.getAttribute("cx"));
-    const secondY = Number(secondCircle.getAttribute("cy"));
+    const second = nodePosition(5);
 
-    expect(secondX).not.toBeCloseTo(firstX, 0);
-    expect(secondY).not.toBeCloseTo(firstY, 0);
+    expect(second.x).not.toBeCloseTo(first.x, 0);
+    expect(second.y).not.toBeCloseTo(first.y, 0);
   });
 
-  it("shows a tier selector for tiered node types but not for Router", async () => {
-    await page.getByText("Router (1pt+)").click();
+  it("shows a tier selector in the armed strip for tiered node types but not for Router", async () => {
+    await armNodeViaModal("Router");
     expect(page.getByTestId("pending-tier-select").elements()).toHaveLength(0);
-    await page.getByText("Router (1pt+)").click(); // toggle off
-    await page.getByText("Firewall (3pt+)").click();
+    await armNodeViaModal("Firewall");
     await findByTestId("pending-tier-select");
   });
 
   it("removes a placed node via its remove marker, taking its edges with it", async () => {
-    await page.getByText("Router (1pt+)").click();
+    await armNodeViaModal("Router");
     clickCanvasAt(250, 250);
     await waitForNodeCount(4);
     await page.getByTestId("grid-node-remove").click();
     await waitForNodeCount(3);
   });
 
-  it("links two nodes into an edge on tap-tap, and un-links on tap-tap again", async () => {
-    await page.getByText("Router (1pt+)").click();
+  it("links two nodes into an edge on tap-tap under the Line tool, and un-links on tap-tap again", async () => {
+    await armNodeViaModal("Router");
     clickCanvasAt(260, 250);
     await waitForNodeCount(4);
 
+    await page.getByTestId("tool-line").click();
     tapNode(2); // entry 1
     tapNode(4); // the new router
     await waitForEdgeCount(1);
@@ -191,33 +207,40 @@ describe("DefenseGrid", () => {
     await waitForEdgeCount(0);
   });
 
-  it("moves a placed node when dragged, changing its rendered position", async () => {
-    await page.getByText("Router (1pt+)").click();
+  it("does not link nodes on tap-tap while the Hand tool is active", async () => {
+    await armNodeViaModal("Router");
     clickCanvasAt(260, 250);
     await waitForNodeCount(4);
-    const before = nodeGroup(4).querySelector("circle")!;
-    const beforeCx = before.getAttribute("cx");
+    await page.getByTestId("tool-hand").click();
+
+    tapNode(2);
+    tapNode(4);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(page.getByTestId("grid-edge").elements()).toHaveLength(0);
+  });
+
+  it("moves a placed node when dragged under the Hand tool, changing its rendered position", async () => {
+    await armNodeViaModal("Router");
+    clickCanvasAt(260, 250);
+    await waitForNodeCount(4);
+    await page.getByTestId("tool-hand").click();
+    const beforeX = nodePosition(4).x;
 
     dragNode(4, 60, 20);
 
     await vi.waitFor(() => {
-      const after = nodeGroup(4).querySelector("circle")!;
-      if (after.getAttribute("cx") === beforeCx) {
+      if (nodePosition(4).x === beforeX) {
         throw new Error("node has not moved yet");
       }
     });
   });
 
-  it("does not move or select fixed Core/Entry nodes when dragged", async () => {
-    const before = nodeGroup(1).querySelector("circle")!; // core
-    const beforeCx = before.getAttribute("cx");
-    const beforeCy = before.getAttribute("cy");
+  it("does not move fixed Core/Entry nodes when dragged", async () => {
+    const before = nodePosition(1); // core
     dragNode(1, 80, 80);
     // give any (incorrect) move a moment to have applied, then assert it did not.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const after = nodeGroup(1).querySelector("circle")!;
-    expect(after.getAttribute("cx")).toBe(beforeCx);
-    expect(after.getAttribute("cy")).toBe(beforeCy);
+    expect(nodePosition(1)).toEqual(before);
   });
 
   it("zooms in and out with the mouse wheel over the canvas", async () => {
@@ -246,10 +269,11 @@ describe("DefenseGrid", () => {
     const saveButton = (await findByTestId("save-defense")) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(true);
 
-    await page.getByText("Router (1pt+)").click();
+    await armNodeViaModal("Router");
     clickCanvasAt(260, 250); // far enough from every fixed node to keep every edge within [200, 2000] DU
     await waitForNodeCount(4);
 
+    await page.getByTestId("tool-line").click();
     tapNode(2);
     tapNode(4);
     await waitForEdgeCount(1);
