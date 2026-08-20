@@ -1,5 +1,5 @@
 import { getAccountTierConfig, getDefenseNodeCost, RULESET_V1, validateDefenseGraph, type BlockTier } from "@payload/sim";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CORE_COLOR, ENTRY_COLOR, findPlaceableEntry, PLACEABLE_NODE_CATALOG } from "../data/defenseNodeCatalog.js";
 import { theme } from "../theme.js";
 import { CORE_ID, toDefenseGraph, useDefenseGridStore, type GridNode } from "../state/defenseGridStore.js";
@@ -12,6 +12,14 @@ const TIER_OPTIONS: readonly BlockTier[] = [1, 2, 3];
 const DRAG_THRESHOLD_PX = 4;
 const VIEWBOX_WIDTH = 560;
 const VIEWBOX_HEIGHT = 500;
+/** Drag mime for palette → canvas node placement (mirrors Virus Lab's NEW_BLOCK_MIME). */
+const NODE_DRAG_MIME = "application/x-defense-node-type";
+/** Converts a wheel `deltaY` into a multiplicative zoom step: negative deltaY (scroll/pinch out)
+ * zooms in, positive zooms out. Exponential rather than linear so equal-magnitude scroll ticks
+ * feel like equal-magnitude zoom steps at any zoom level, not just near 1x. */
+function zoomFactorFromWheelDelta(deltaY: number): number {
+  return Math.exp(-deltaY * 0.001);
+}
 
 function nodeColor(node: GridNode): string {
   if (node.type === "core") return CORE_COLOR;
@@ -49,11 +57,27 @@ export function DefenseGrid(): JSX.Element {
   const moveNode = useDefenseGridStore((state) => state.moveNode);
   const removeNode = useDefenseGridStore((state) => state.removeNode);
   const tapNodeForEdge = useDefenseGridStore((state) => state.tapNodeForEdge);
-  const setZoom = useDefenseGridStore((state) => state.setZoom);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const [savedGraphJson, setSavedGraphJson] = useState<string | null>(null);
+
+  /** Mouse-wheel / trackpad-pinch zoom, centered on nothing fancier than "zoom in place" (GDD
+   * doesn't call for cursor-anchored zoom). Wired via a native, non-passive listener rather than
+   * React's onWheel — React attaches wheel listeners passively by default, so `preventDefault()`
+   * inside a React handler would silently fail to stop the page itself from scrolling underneath
+   * the canvas while the player zooms. */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handleWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      const store = useDefenseGridStore.getState();
+      store.setZoom(store.zoom * zoomFactorFromWheelDelta(event.deltaY));
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
 
   const totalCost = nodes.reduce((sum, node) => sum + nodeCost(node), 0);
   const overBudget = totalCost > TIER_CONFIG.defenseBudgetPoints;
@@ -135,12 +159,21 @@ export function DefenseGrid(): JSX.Element {
     <Screen title="Defense Grid">
       <section data-testid="palette">
         <h2>Tambah Node</h2>
+        <p className="payload-screen-hint">Seret node ke grid, atau klik lalu tap area kosong.</p>
         {PLACEABLE_NODE_CATALOG.map((entry) => (
           <button
             key={entry.type}
             type="button"
             data-testid="palette-node"
+            className="payload-palette-block"
             aria-pressed={pendingPlacementType === entry.type}
+            draggable
+            onDragStart={(event) => {
+              setPendingPlacement(entry.type);
+              event.dataTransfer.setData(NODE_DRAG_MIME, entry.type);
+              event.dataTransfer.effectAllowed = "copy";
+            }}
+            onDragEnd={() => setPendingPlacement(null)}
             style={{ borderColor: entry.color }}
             onClick={() => setPendingPlacement(pendingPlacementType === entry.type ? null : entry.type)}
           >
@@ -156,57 +189,65 @@ export function DefenseGrid(): JSX.Element {
             ))}
           </select>
         )}
-        {pendingPlacementType && <p data-testid="placement-hint">Tap area kosong di grid untuk menempatkan {findPlaceableEntry(pendingPlacementType).label}.</p>}
+        {pendingPlacementType && <p data-testid="placement-hint">Lepaskan di grid, atau tap area kosong, untuk menempatkan {findPlaceableEntry(pendingPlacementType).label}.</p>}
       </section>
 
-      <section data-testid="zoom-controls">
-        <button type="button" data-testid="zoom-out" onClick={() => setZoom(zoom - 0.25)} aria-label="Perkecil">
-          −
-        </button>
-        <span data-testid="zoom-level">{Math.round(zoom * 100)}%</span>
-        <button type="button" data-testid="zoom-in" onClick={() => setZoom(zoom + 0.25)} aria-label="Perbesar">
-          +
-        </button>
-      </section>
-
-      <svg
-        ref={svgRef}
-        data-testid="grid-canvas"
-        viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
-        preserveAspectRatio="none"
-        width="100%"
-        height="420"
-        style={{ background: theme.backgroundPanel, cursor: pendingPlacementType ? "crosshair" : "default", touchAction: "none" }}
-        onClick={handleBackgroundClick}
-        onPointerMove={handlePointerMove}
-      >
-        <g transform={`scale(${zoom})`}>
-          {edges.map((edge) => {
-            const from = nodesById.get(edge.from);
-            const to = nodesById.get(edge.to);
-            if (!from || !to) return null;
-            return <line key={`${edge.from}-${edge.to}`} data-testid="grid-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={theme.border} strokeWidth={2} />;
-          })}
-          {nodes.map((node) => (
-            <g
-              key={node.id}
-              data-testid="grid-node"
-              data-node-type={node.type}
-              data-node-id={node.id}
-              onPointerDown={(event) => handleNodePointerDown(node, event)}
-              onPointerUp={(event) => handleNodePointerUp(node, event)}
-              style={{ cursor: node.fixed ? "default" : "grab" }}
-            >
-              <circle cx={node.x} cy={node.y} r={nodeRadius(node)} fill={nodeColor(node)} stroke={selectedForEdgeId === node.id ? theme.text : "none"} strokeWidth={3} />
-              {!node.fixed && (
-                <text data-testid="grid-node-remove" x={node.x + nodeRadius(node)} y={node.y - nodeRadius(node)} fontSize={14} fill={theme.faction.attack} onClick={(event) => { event.stopPropagation(); removeNode(node.id); }} style={{ cursor: "pointer" }}>
-                  ✕
-                </text>
-              )}
-            </g>
-          ))}
-        </g>
-      </svg>
+      <div className="payload-grid-canvas-wrap">
+        <svg
+          ref={svgRef}
+          data-testid="grid-canvas"
+          className={pendingPlacementType ? "payload-grid-canvas payload-grid-canvas--armed" : "payload-grid-canvas"}
+          viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+          preserveAspectRatio="none"
+          width="100%"
+          height="420"
+          style={{ background: theme.backgroundPanel, cursor: pendingPlacementType ? "crosshair" : "default", touchAction: "none" }}
+          onClick={handleBackgroundClick}
+          onPointerMove={handlePointerMove}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes(NODE_DRAG_MIME)) {
+              event.preventDefault();
+            }
+          }}
+          onDrop={(event) => {
+            const draggedType = event.dataTransfer.getData(NODE_DRAG_MIME);
+            if (!draggedType) return;
+            event.preventDefault();
+            const point = clientToSvgPoint(event.clientX, event.clientY);
+            placeNodeAt(Math.round(point.x), Math.round(point.y));
+          }}
+        >
+          <g transform={`scale(${zoom})`}>
+            {edges.map((edge) => {
+              const from = nodesById.get(edge.from);
+              const to = nodesById.get(edge.to);
+              if (!from || !to) return null;
+              return <line key={`${edge.from}-${edge.to}`} data-testid="grid-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={theme.border} strokeWidth={2} />;
+            })}
+            {nodes.map((node) => (
+              <g
+                key={node.id}
+                data-testid="grid-node"
+                data-node-type={node.type}
+                data-node-id={node.id}
+                onPointerDown={(event) => handleNodePointerDown(node, event)}
+                onPointerUp={(event) => handleNodePointerUp(node, event)}
+                style={{ cursor: node.fixed ? "default" : "grab" }}
+              >
+                <circle cx={node.x} cy={node.y} r={nodeRadius(node)} fill={nodeColor(node)} stroke={selectedForEdgeId === node.id ? theme.text : "none"} strokeWidth={3} />
+                {!node.fixed && (
+                  <text data-testid="grid-node-remove" x={node.x + nodeRadius(node)} y={node.y - nodeRadius(node)} fontSize={14} fill={theme.faction.attack} onClick={(event) => { event.stopPropagation(); removeNode(node.id); }} style={{ cursor: "pointer" }}>
+                    ✕
+                  </text>
+                )}
+              </g>
+            ))}
+          </g>
+        </svg>
+        <div className="payload-zoom-badge" data-testid="zoom-level">
+          {Math.round(zoom * 100)}%
+        </div>
+      </div>
 
       <section data-testid="budget-bar">
         <h2>Defense Budget</h2>

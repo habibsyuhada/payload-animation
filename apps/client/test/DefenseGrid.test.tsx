@@ -63,6 +63,30 @@ function clickCanvasAt(x: number, y: number): void {
   canvas.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX, clientY }));
 }
 
+/** A synthetic DataTransfer stays in read/write mode throughout (unlike a real user-initiated
+ * drag's, which only exposes getData() during "drop"/"dragend"), so reusing the same instance
+ * across dragstart → dragover → drop below correctly round-trips the dragged node type through
+ * the palette button's and canvas's handlers, same as VirusLab.test.tsx's fireDrag. */
+function fireDrag(element: Element, type: string, dataTransfer: DataTransfer): void {
+  element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+}
+
+/** Drags a palette button (matched by its visible label, e.g. "Router (1pt+)") and drops it onto
+ * the canvas at the given viewBox coordinates — see clickCanvasAt for the coordinate conversion. */
+function dragPaletteNodeTo(label: string, x: number, y: number): void {
+  const paletteButton = page.getByText(label).element();
+  const canvas = page.getByTestId("grid-canvas").element() as SVGSVGElement;
+  const rect = canvas.getBoundingClientRect();
+  const clientX = rect.left + x * (rect.width / VIEWBOX_WIDTH);
+  const clientY = rect.top + y * (rect.height / VIEWBOX_HEIGHT);
+
+  const dataTransfer = new DataTransfer();
+  fireDrag(paletteButton, "dragstart", dataTransfer);
+  fireDrag(canvas, "dragover", dataTransfer);
+  canvas.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer, clientX, clientY }));
+  fireDrag(paletteButton, "dragend", dataTransfer);
+}
+
 function nodeGroup(id: number): SVGGElement {
   return document.querySelector(`[data-node-id="${id}"]`) as SVGGElement;
 }
@@ -97,6 +121,13 @@ describe("DefenseGrid", () => {
   it("places a new node on the canvas after picking a palette type and clicking", async () => {
     await page.getByText("Router (1pt+)").click();
     clickCanvasAt(250, 250);
+    await waitForNodeCount(4);
+    const budgetText = await findByTestId("defense-budget-text");
+    expect(budgetText.textContent).toContain("1 / 20 pt");
+  });
+
+  it("places a new node by dragging its palette button and dropping it on the canvas", async () => {
+    dragPaletteNodeTo("Router (1pt+)", 250, 250);
     await waitForNodeCount(4);
     const budgetText = await findByTestId("defense-budget-text");
     expect(budgetText.textContent).toContain("1 / 20 pt");
@@ -161,14 +192,26 @@ describe("DefenseGrid", () => {
     expect(after.getAttribute("cy")).toBe(beforeCy);
   });
 
-  it("zooms in and out via the zoom buttons", async () => {
-    const level = await findByTestId("zoom-level");
-    expect(level.textContent).toBe("100%");
-    await page.getByTestId("zoom-in").click();
-    expect((await findByTestId("zoom-level")).textContent).toBe("125%");
-    await page.getByTestId("zoom-out").click();
-    await page.getByTestId("zoom-out").click();
-    expect((await findByTestId("zoom-level")).textContent).toBe("75%");
+  it("zooms in and out with the mouse wheel over the canvas", async () => {
+    const canvas = page.getByTestId("grid-canvas").element() as SVGSVGElement;
+    expect((await findByTestId("zoom-level")).textContent).toBe("100%");
+
+    canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -200 }));
+    const zoomedInPct = await vi.waitFor(() => {
+      const pct = Number(page.getByTestId("zoom-level").element()!.textContent!.replace("%", ""));
+      if (pct <= 100) {
+        throw new Error("zoom has not increased yet");
+      }
+      return pct;
+    });
+
+    canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 400 }));
+    await vi.waitFor(() => {
+      const pct = Number(page.getByTestId("zoom-level").element()!.textContent!.replace("%", ""));
+      if (pct >= zoomedInPct) {
+        throw new Error("zoom has not decreased yet");
+      }
+    });
   });
 
   it("disables Save until the topology is valid, then saves once both entries reach Core", async () => {
