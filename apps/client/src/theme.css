@@ -398,6 +398,9 @@ select {
   overflow: hidden;
   /* Hands every pan/pinch to the pointer handlers instead of the browser's own scroll & zoom. */
   touch-action: none;
+  /* A pan drag across the canvas must not start highlighting node labels as it goes. */
+  user-select: none;
+  -webkit-user-select: none;
   cursor: grab;
 }
 
@@ -444,10 +447,67 @@ select {
   font-weight: 700;
 }
 
+/* Edge marker for a node the camera has left off-screen: a pill pinned just inside the viewport
+   edge, in that node's direction. Tap to bring the node back to the middle. */
+.payload-defend-offscreen {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 999px;
+  background: rgba(26, 30, 42, 0.92);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
+
+/* Hover lift would fight the translate(-50%, -50%) that centers the pill on its anchor point. */
+.payload-defend-offscreen:hover:not(:disabled) {
+  transform: translate(-50%, -50%);
+  background: rgba(35, 40, 56, 0.95);
+}
+
+.payload-defend-offscreen-arrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.payload-defend-offscreen-glyph {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.payload-defend-add-btn {
+  position: absolute;
+  right: 0.75rem;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.4rem;
+  line-height: 1;
+  background: var(--color-faction-movement);
+  border-color: var(--color-faction-movement);
+  color: #061018;
+  z-index: 3;
+}
+
 .payload-defend-hint {
   position: absolute;
   left: 0.75rem;
-  right: 0.75rem;
+  /* Clear of the add-node button in the corner. */
+  right: 4.75rem;
   bottom: max(0.75rem, env(safe-area-inset-bottom));
   margin: 0;
   padding: 0.45rem 0.7rem;

@@ -22,6 +22,7 @@ export interface DefendNode {
 
 export const CORE_ID = 1;
 export const ENTRY_ID = 2;
+const FIRST_PLACEABLE_ID = 3;
 
 export const MIN_ZOOM = 0.4;
 export const MAX_ZOOM = 3;
@@ -32,6 +33,9 @@ const INITIAL_NODES: readonly DefendNode[] = [
   { id: ENTRY_ID, type: "entry", x: -170, y: 0 },
   { id: CORE_ID, type: "core", x: 170, y: 0 },
 ];
+
+/** Every node type the player can actually place — Entry and Core come with the graph. */
+export type PlaceableNodeType = Exclude<DefenseNodeType, "entry" | "core">;
 
 /** Entry and Core are system-owned (GDD §5): the player may reposition them but never delete
  * them — a graph without either has no attack path at all. */
@@ -60,13 +64,19 @@ export interface DefendState {
   readonly clearSelection: () => void;
   readonly openDetail: (id: number) => void;
   readonly closeDetail: () => void;
+  /** Drops a new node at the given world point and selects it, so its action buttons are already
+   * showing where the player is looking. */
+  readonly addNode: (type: PlaceableNodeType, x: number, y: number, tier?: BlockTier) => void;
   readonly moveNode: (id: number, x: number, y: number) => void;
   readonly removeNode: (id: number) => void;
   readonly panBy: (screenDx: number, screenDy: number) => void;
   readonly zoomAtPoint: (factor: number, screenX: number, screenY: number) => void;
   readonly fitToBounds: (bounds: WorldBounds, canvasWidth: number, canvasHeight: number) => void;
+  readonly centerOnWorldPoint: (worldX: number, worldY: number, canvasWidth: number, canvasHeight: number) => void;
   readonly reset: () => void;
 }
+
+let nextNodeId = FIRST_PLACEABLE_ID;
 
 export const useDefendStore = create<DefendState>((set) => ({
   nodes: INITIAL_NODES,
@@ -80,6 +90,12 @@ export const useDefendStore = create<DefendState>((set) => ({
   clearSelection: () => set({ selectedNodeId: null }),
   openDetail: (id) => set({ detailNodeId: id }),
   closeDetail: () => set({ detailNodeId: null }),
+
+  addNode: (type, x, y, tier) => {
+    const id = nextNodeId;
+    nextNodeId += 1;
+    set((state) => ({ nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x, y }], selectedNodeId: id }));
+  },
 
   moveNode: (id, x, y) => set((state) => ({ nodes: state.nodes.map((node) => (node.id === id ? { ...node, x, y } : node)) })),
 
@@ -128,5 +144,13 @@ export const useDefendStore = create<DefendState>((set) => ({
       };
     }),
 
-  reset: () => set({ nodes: INITIAL_NODES, zoom: 1, offsetX: 0, offsetY: 0, selectedNodeId: null, detailNodeId: null }),
+  /** Slides the camera (zoom untouched) until `worldX/worldY` sits in the middle of the canvas —
+   * how an off-screen node's direction marker brings that node back into view. */
+  centerOnWorldPoint: (worldX, worldY, canvasWidth, canvasHeight) =>
+    set((state) => ({ offsetX: canvasWidth / 2 - worldX * state.zoom, offsetY: canvasHeight / 2 - worldY * state.zoom })),
+
+  reset: () => {
+    nextNodeId = FIRST_PLACEABLE_ID;
+    set({ nodes: INITIAL_NODES, zoom: 1, offsetX: 0, offsetY: 0, selectedNodeId: null, detailNodeId: null });
+  },
 }));

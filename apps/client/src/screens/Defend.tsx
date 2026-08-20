@@ -11,9 +11,10 @@ import {
   ENTRY_SHAPE,
   findNodeTierDescription,
   findPlaceableEntry,
+  PLACEABLE_NODE_CATALOG,
   type NodeShape,
 } from "../data/defenseNodeCatalog.js";
-import { isRemovable, useDefendStore, type DefendNode, type WorldBounds } from "../state/defendStore.js";
+import { isRemovable, useDefendStore, type DefendNode, type PlaceableNodeType, type WorldBounds } from "../state/defendStore.js";
 import { theme } from "../theme.js";
 
 /** Raw CSS-pixel movement below which a press-and-release still counts as a tap, not a drag. */
@@ -25,6 +26,8 @@ const EDGE_MARGIN_PX = 8;
 /** World-space size of one background grid cell — drawn via an SVG pattern so it pans and zooms
  * with the camera, giving the eye something to track while dragging an otherwise empty canvas. */
 const GRID_CELL_DU = 40;
+/** How far in from the viewport edge an off-screen node's direction marker sits. */
+const OFFSCREEN_INSET_PX = 34;
 
 function zoomFactorFromWheelDelta(deltaY: number): number {
   return Math.exp(-deltaY * 0.001);
@@ -73,6 +76,49 @@ function worldBoundsOf(nodes: readonly DefendNode[]): WorldBounds {
     maxX: Math.max(...nodes.map((node) => node.x + nodeRadius(node))),
     maxY: Math.max(...nodes.map((node) => node.y + nodeRadius(node))),
   };
+}
+
+export interface OffscreenMarker {
+  readonly node: DefendNode;
+  /** Screen position of the marker itself, pinned just inside the viewport edge. */
+  readonly left: number;
+  readonly top: number;
+  /** Direction from the middle of the viewport towards the node, in degrees (0 = right). */
+  readonly angleDeg: number;
+}
+
+/** One marker per node the camera has left behind, pinned to the edge of the viewport in the
+ * node's direction — so panning away from the Core never loses it, and the player can always see
+ * which way to go back (tapping a marker does exactly that). Nodes on screen get no marker. */
+function offscreenMarkersFor(nodes: readonly DefendNode[], camera: { zoom: number; offsetX: number; offsetY: number }, viewport: { width: number; height: number }): readonly OffscreenMarker[] {
+  if (viewport.width <= 0 || viewport.height <= 0) {
+    return [];
+  }
+  const centerX = viewport.width / 2;
+  const centerY = viewport.height / 2;
+  const halfWidth = Math.max(1, centerX - OFFSCREEN_INSET_PX);
+  const halfHeight = Math.max(1, centerY - OFFSCREEN_INSET_PX);
+
+  const markers: OffscreenMarker[] = [];
+  for (const node of nodes) {
+    const screenX = node.x * camera.zoom + camera.offsetX;
+    const screenY = node.y * camera.zoom + camera.offsetY;
+    const radius = nodeRadius(node) * camera.zoom;
+    const onScreen = screenX + radius >= 0 && screenX - radius <= viewport.width && screenY + radius >= 0 && screenY - radius <= viewport.height;
+    if (onScreen) {
+      continue;
+    }
+    // Walk out from the middle of the viewport along the direction of the node until the ray hits
+    // the inset rectangle — whichever axis runs out of room first decides where it lands.
+    const dx = screenX - centerX;
+    const dy = screenY - centerY;
+    const travel = Math.min(Math.abs(dx) > 0.001 ? halfWidth / Math.abs(dx) : Infinity, Math.abs(dy) > 0.001 ? halfHeight / Math.abs(dy) : Infinity);
+    if (!Number.isFinite(travel)) {
+      continue;
+    }
+    markers.push({ node, left: centerX + dx * travel, top: centerY + dy * travel, angleDeg: (Math.atan2(dy, dx) * 180) / Math.PI });
+  }
+  return markers;
 }
 
 /** Where the action bar sits: centered under the node, flipped above it when the node is near the
@@ -125,6 +171,7 @@ export function Defend(): JSX.Element {
   const clearSelection = useDefendStore((state) => state.clearSelection);
   const openDetail = useDefendStore((state) => state.openDetail);
   const closeDetail = useDefendStore((state) => state.closeDetail);
+  const addNode = useDefendStore((state) => state.addNode);
   const moveNode = useDefendStore((state) => state.moveNode);
   const removeNode = useDefendStore((state) => state.removeNode);
 
@@ -135,8 +182,17 @@ export function Defend(): JSX.Element {
   const nodeTapRef = useRef<{ id: number; clientX: number; clientY: number } | null>(null);
   const didFitRef = useRef(false);
   const [isDraggingNode, setDraggingNode] = useState(false);
+  const [isPickerOpen, setPickerOpen] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [actionBarSize, setActionBarSize] = useState({ width: 0, height: 0 });
+
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const detailNode = nodes.find((node) => node.id === detailNodeId) ?? null;
+  const offscreenMarkers = offscreenMarkersFor(nodes, { zoom, offsetX, offsetY }, viewportSize);
+  /** A selected node the camera has left behind: its buttons would otherwise float over empty
+   * canvas pointing at nothing. The selection itself survives, so panning back brings them back. */
+  const selectionIsOffscreen = offscreenMarkers.some((marker) => marker.node.id === selectedNodeId);
+  const actionBarPosition = selectedNode ? actionBarPositionFor(selectedNode, { zoom, offsetX, offsetY }, viewportSize, actionBarSize) : null;
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -167,7 +223,8 @@ export function Defend(): JSX.Element {
   useLayoutEffect(() => {
     const bar = actionBarRef.current;
     setActionBarSize(bar ? { width: bar.offsetWidth, height: bar.offsetHeight } : { width: 0, height: 0 });
-  }, [selectedNodeId]);
+    // Re-measured when the bar comes back after its node was panned off-screen and back, too.
+  }, [selectedNodeId, selectionIsOffscreen]);
 
   /** Wheel/trackpad zoom, anchored on the cursor. Wired as a native non-passive listener rather
    * than React's onWheel: React attaches wheel listeners passively, so preventDefault() inside a
@@ -194,6 +251,15 @@ export function Defend(): JSX.Element {
   }, [detailNodeId, closeDetail]);
 
   function handleCanvasPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    try {
+      // Not just belt-and-braces: without capture, dragging across the SVG lets the browser start
+      // its own native drag, which fires pointercancel and kills the pan halfway through the
+      // gesture. Capturing to the viewport keeps every move coming to us.
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic PointerEvent (tests) or an already-released capture — the pan still tracks via
+      // the pointermove/pointerup handlers below.
+    }
     const camera = cameraRef.current;
     camera.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     camera.moved = false;
@@ -251,6 +317,9 @@ export function Defend(): JSX.Element {
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     if (nodeDragRef.current) {
       nodeDragRef.current = null;
       setDraggingNode(false);
@@ -295,9 +364,17 @@ export function Defend(): JSX.Element {
     setDraggingNode(true);
   }
 
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
-  const detailNode = nodes.find((node) => node.id === detailNodeId) ?? null;
-  const actionBarPosition = selectedNode ? actionBarPositionFor(selectedNode, { zoom, offsetX, offsetY }, viewportSize, actionBarSize) : null;
+  /** Drops the picked type in the middle of whatever the camera is currently looking at — the
+   * screen centre converted back into world coordinates. */
+  function handlePickNodeType(type: PlaceableNodeType, tiered: boolean): void {
+    setPickerOpen(false);
+    if (viewportSize.width <= 0 || viewportSize.height <= 0) {
+      return;
+    }
+    const worldX = Math.round((viewportSize.width / 2 - offsetX) / zoom);
+    const worldY = Math.round((viewportSize.height / 2 - offsetY) / zoom);
+    addNode(type, worldX, worldY, tiered ? 1 : undefined);
+  }
 
   return (
     <div className="payload-defend" data-testid="defend-page">
@@ -344,7 +421,7 @@ export function Defend(): JSX.Element {
           </g>
         </svg>
 
-        {selectedNode && actionBarPosition && (
+        {selectedNode && actionBarPosition && !selectionIsOffscreen && (
           // Positioned in screen pixels rather than inside the zoomed <g>: the buttons stay the
           // same thumb-sized target whether the player is zoomed all the way in or out.
           <div ref={actionBarRef} className="payload-defend-actions" data-testid="defend-node-actions" style={{ left: actionBarPosition.left, top: actionBarPosition.top }}>
@@ -386,6 +463,32 @@ export function Defend(): JSX.Element {
           </div>
         )}
 
+        {offscreenMarkers.map((marker) => (
+          <button
+            key={marker.node.id}
+            type="button"
+            className="payload-defend-offscreen"
+            data-testid="defend-offscreen-marker"
+            data-node-id={marker.node.id}
+            data-angle={Math.round(marker.angleDeg)}
+            title={`${nodeLabel(marker.node)} di luar layar — tap untuk ke sana`}
+            aria-label={`${nodeLabel(marker.node)} di luar layar — tap untuk ke sana`}
+            style={{ left: marker.left, top: marker.top, borderColor: nodeColor(marker.node) }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => useDefendStore.getState().centerOnWorldPoint(marker.node.x, marker.node.y, viewportSize.width, viewportSize.height)}
+          >
+            {/* Only the arrow spins towards the node; the silhouette next to it says which node it
+            is, in the same shape language the map itself uses. A text label would be wider than
+            the inset the marker sits at, so it would hang off the edge of the screen. */}
+            <span className="payload-defend-offscreen-arrow" style={{ transform: `rotate(${marker.angleDeg}deg)`, color: nodeColor(marker.node) }} aria-hidden="true">
+              ➤
+            </span>
+            <svg className="payload-defend-offscreen-glyph" viewBox="0 0 24 24" aria-hidden="true">
+              <NodeGlyph shape={nodeShapeOf(marker.node)} cx={12} cy={12} r={9} fill={nodeColor(marker.node)} stroke="none" strokeWidth={0} />
+            </svg>
+          </button>
+        ))}
+
         <div className="payload-defend-topbar">
           <Link to="/" className="payload-defend-exit" data-testid="defend-exit">
             ← Keluar
@@ -398,7 +501,41 @@ export function Defend(): JSX.Element {
         <p className="payload-defend-hint" data-testid="defend-hint">
           {isDraggingNode ? "Tarik untuk memindahkan node." : "Geser untuk menggerakkan kamera · cubit untuk zoom · tap node untuk aksinya."}
         </p>
+
+        <button
+          type="button"
+          className="payload-defend-add-btn"
+          data-testid="defend-add-node"
+          title="Tambah node"
+          aria-label="Tambah node"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setPickerOpen(true)}
+        >
+          ＋
+        </button>
       </div>
+
+      {isPickerOpen && (
+        <div className="payload-modal-backdrop" data-testid="defend-picker-backdrop" onClick={() => setPickerOpen(false)}>
+          <div className="payload-modal" role="dialog" aria-label="Pilih node" data-testid="defend-picker" onClick={(event) => event.stopPropagation()}>
+            <h2>Pilih Node</h2>
+            <div className="payload-modal-grid">
+              {PLACEABLE_NODE_CATALOG.map((entry) => (
+                <button key={entry.type} type="button" data-testid="defend-picker-entry" data-node-type={entry.type} className="payload-modal-card" style={{ borderColor: entry.color }} onClick={() => handlePickNodeType(entry.type, entry.tiered)}>
+                  <svg className="payload-modal-card-glyph" viewBox="0 0 40 40" aria-hidden="true">
+                    <NodeGlyph shape={entry.shape} cx={20} cy={20} r={14} fill={entry.color} stroke="none" strokeWidth={0} />
+                  </svg>
+                  <span>{entry.label}</span>
+                  <small>{getDefenseNodeCost(entry.type, entry.tiered ? 1 : undefined)}pt</small>
+                </button>
+              ))}
+            </div>
+            <button type="button" data-testid="defend-picker-close" onClick={() => setPickerOpen(false)}>
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
 
       {detailNode && (
         <div className="payload-modal-backdrop" data-testid="defend-detail-backdrop" onClick={closeDetail}>

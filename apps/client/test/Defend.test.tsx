@@ -12,7 +12,10 @@ import "../src/theme.css";
 let container: HTMLDivElement;
 let root: Root;
 
+/** Manually seeded node (via the store) — kept clear of the ids the page itself hands out. */
 const ROUTER_ID = 7;
+/** First id `addNode` assigns after a reset, i.e. the node the picker creates. */
+const ADDED_NODE_ID = 3;
 
 beforeEach(() => {
   useDefendStore.getState().reset();
@@ -159,6 +162,29 @@ describe("Defend page", () => {
     expect(page.getByTestId("defend-action-remove").elements()).toHaveLength(0);
   });
 
+  it("adds the picked node type at the centre of the screen, already selected", async () => {
+    await page.getByTestId("defend-add-node").click();
+    await findByTestId("defend-picker");
+    await page.getByText("Router").click();
+    await expectGone("defend-picker");
+
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-node").elements().length !== 3) {
+        throw new Error("new node not rendered yet");
+      }
+    });
+    expect(nodeGroup(ADDED_NODE_ID).getAttribute("data-node-type")).toBe("router");
+    // Centre of the screen in world coordinates, per the camera's own transform.
+    const { zoom, offsetX, offsetY } = useDefendStore.getState();
+    const rect = viewport().getBoundingClientRect();
+    const added = nodePosition(ADDED_NODE_ID);
+    expect(added.x * zoom + offsetX).toBeCloseTo(rect.width / 2, 0);
+    expect(added.y * zoom + offsetY).toBeCloseTo(rect.height / 2, 0);
+    // Selected on arrival, so its action buttons — delete included — are already up.
+    await findByTestId("defend-node-actions");
+    await findByTestId("defend-action-remove");
+  });
+
   it("deletes an ordinary node via its delete button", async () => {
     useDefendStore.setState((state) => ({ nodes: [...state.nodes, { id: ROUTER_ID, type: "router" as const, x: 0, y: 120 }] }));
     await vi.waitFor(() => {
@@ -242,6 +268,65 @@ describe("Defend page", () => {
         throw new Error("pinch-in has not zoomed out yet");
       }
     });
+  });
+
+  it("marks a node the camera has panned off-screen, pointing in its direction, and none while both are visible", async () => {
+    await findByTestId("defend-canvas");
+    expect(page.getByTestId("defend-offscreen-marker").elements()).toHaveLength(0);
+
+    // Shove the camera far to the right of both nodes: they now lie off the left edge.
+    const { zoom, offsetY } = useDefendStore.getState();
+    useDefendStore.setState({ offsetX: -2000 * zoom, offsetY });
+
+    const markers = await vi.waitFor(() => {
+      const found = page.getByTestId("defend-offscreen-marker").elements();
+      if (found.length !== 2) {
+        throw new Error(`expected both nodes to be marked, got ${found.length}`);
+      }
+      return found;
+    });
+    for (const marker of markers) {
+      // atan2 of a straight-left direction is ±180°.
+      expect(Math.abs(Number(marker.getAttribute("data-angle")))).toBeGreaterThan(150);
+      expect(marker.getAttribute("aria-label")).toMatch(/Entry|Core/);
+    }
+  });
+
+  it("puts the action buttons away while their node is off-screen, and brings them back with it", async () => {
+    tapNode(CORE_ID);
+    await findByTestId("defend-node-actions");
+
+    const { zoom, offsetX } = useDefendStore.getState();
+    useDefendStore.setState({ offsetX: -2000 * zoom });
+    await expectGone("defend-node-actions");
+
+    useDefendStore.setState({ offsetX });
+    await findByTestId("defend-node-actions");
+  });
+
+  it("brings a node back into view when its off-screen marker is tapped", async () => {
+    const { zoom } = useDefendStore.getState();
+    useDefendStore.setState({ offsetX: -2000 * zoom });
+    await vi.waitFor(() => {
+      if (!document.querySelector(`[data-testid=defend-offscreen-marker][data-node-id="${CORE_ID}"]`)) {
+        throw new Error("Core's off-screen marker has not appeared yet");
+      }
+    });
+
+    document.querySelector(`[data-testid=defend-offscreen-marker][data-node-id="${CORE_ID}"]`)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    // Core is back on screen, so its own marker is gone...
+    await vi.waitFor(() => {
+      if (document.querySelector(`[data-testid=defend-offscreen-marker][data-node-id="${CORE_ID}"]`)) {
+        throw new Error("Core is still marked as off-screen");
+      }
+    });
+    // ...and centred: its screen position is the middle of the viewport.
+    const state = useDefendStore.getState();
+    const rect = viewport().getBoundingClientRect();
+    const core = state.nodes.find((node) => node.id === CORE_ID)!;
+    expect(core.x * state.zoom + state.offsetX).toBeCloseTo(rect.width / 2, 0);
+    expect(core.y * state.zoom + state.offsetY).toBeCloseTo(rect.height / 2, 0);
   });
 
   it("zooms with the mouse wheel too", async () => {
