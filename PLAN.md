@@ -174,7 +174,7 @@ diputar (DoD #3).
       `rulesetVersion`; golden log v1 wajib tetap byte-identical.
 - [x] **V7.2** Katalog kondisi/aksi + bobot KB per kondisi & per aksi (+ batas jumlah event per
       account tier) di `docs/RULESET.md` v2.
-- [ ] **V7.3** Virus Lab ditulis ulang jadi editor event sheet tap-driven (bukan drag bebas),
+- [x] **V7.3** Virus Lab ditulis ulang jadi editor event sheet tap-driven (bukan drag bebas),
       nesting maksimal 3 level.
 - [ ] **V7.4** `tools/balance-lab`: generator sheet acak + pencarian kombo dominan di CI —
       prasyarat rilis v2 ke pemain (GDD risiko "kombinatorik blok meledak").

@@ -90,27 +90,139 @@ body {
   transition: width 0.15s ease-out;
 }
 
-.payload-chain-list {
+/* --- Virus Lab, ruleset v2 event sheet (V7.3) --------------------------------------------
+ * Every row is a card; children indent one step. The chips inside a card wrap rather than
+ * scroll, because a rule that runs off the side of a 390px screen is a rule nobody reads.
+ */
+
+.payload-sheet-hint {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+}
+
+.payload-sheet-list,
+.payload-sheet-children {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
+  gap: 0.5rem;
+}
+
+.payload-sheet-children {
+  margin-top: 0.5rem;
+  border-left: 2px solid var(--color-border);
+  padding-left: 0.5rem;
+}
+
+.payload-sheet-card {
+  background: var(--color-background-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  flex-direction: column;
   gap: 0.4rem;
 }
 
-.payload-chain-row {
+.payload-sheet-conditions,
+.payload-sheet-actions {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.6rem;
-  background: var(--color-background-panel);
-  border-radius: 0.25rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
-.payload-chain-label {
+.payload-sheet-keyword {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  padding-top: 0.45rem;
+  min-width: 3.2rem;
+}
+
+.payload-sheet-chip-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
   flex: 1;
-  color: var(--color-text);
+  min-width: 0;
+}
+
+.payload-sheet-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.4rem;
+  background: var(--color-background-panel-raised);
+  border-left: 3px solid var(--color-border);
+  border-radius: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.payload-sheet-chip button {
+  margin: 0;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 0.3rem;
+}
+
+.payload-sheet-chip select {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.2rem;
+}
+
+.payload-sheet-chip-weight {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.payload-sheet-negate {
+  opacity: 0.4;
+}
+
+.payload-sheet-negate--on {
+  opacity: 1;
+  border-color: var(--color-faction-attack);
+  color: var(--color-faction-attack);
+}
+
+.payload-sheet-add {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  border-style: dashed;
+}
+
+.payload-sheet-row-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.35rem;
+}
+
+.payload-sheet-row-controls button {
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.payload-sheet-row-controls select {
+  font-size: 0.78rem;
+}
+
+.payload-sheet-picker-summary {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.25;
 }
 
 .payload-movement-option {
@@ -192,38 +304,6 @@ select {
   background: var(--color-background-panel-raised);
   color: var(--color-text);
   font: inherit;
-}
-
-.payload-palette-block {
-  cursor: grab;
-}
-
-.payload-palette-block:active {
-  cursor: grabbing;
-}
-
-.payload-chain-builder {
-  padding: 0.5rem;
-  border-radius: 0.75rem;
-  outline: 2px dashed transparent;
-  outline-offset: 6px;
-  transition: outline-color 0.15s ease-out;
-}
-
-.payload-chain-builder--drop-active {
-  outline-color: var(--color-faction-movement);
-}
-
-.payload-chain-row {
-  cursor: grab;
-  transition:
-    background-color 0.12s ease-out,
-    box-shadow 0.12s ease-out;
-}
-
-.payload-chain-row--drop-target {
-  background: var(--color-background-panel);
-  box-shadow: inset 0 2px 0 var(--color-faction-movement);
 }
 
 .payload-grid-editor {
