@@ -12,8 +12,6 @@ const TIER_OPTIONS: readonly BlockTier[] = [1, 2, 3];
 const DRAG_THRESHOLD_PX = 4;
 const VIEWBOX_WIDTH = 560;
 const VIEWBOX_HEIGHT = 500;
-/** Drag mime for palette → canvas node placement (mirrors Virus Lab's NEW_BLOCK_MIME). */
-const NODE_DRAG_MIME = "application/x-defense-node-type";
 /** Converts a wheel `deltaY` into a multiplicative zoom step: negative deltaY (scroll/pinch out)
  * zooms in, positive zooms out. Exponential rather than linear so equal-magnitude scroll ticks
  * feel like equal-magnitude zoom steps at any zoom level, not just near 1x. */
@@ -44,6 +42,22 @@ interface DragState {
   moved: boolean;
 }
 
+interface PanDragState {
+  readonly startClientX: number;
+  readonly startClientY: number;
+  readonly startPanX: number;
+  readonly startPanY: number;
+  moved: boolean;
+}
+
+/** Tracks a palette button's own pointer session across the drag: whether that node type was
+ * already armed *before* this press started, so pointerup can tell "drag onto the canvas" (place
+ * immediately) apart from "a plain tap that should toggle arming" (see the palette button's
+ * onPointerDown/onPointerUp below) without the two paths fighting over pendingPlacementType. */
+interface PaletteDragState {
+  readonly wasArmedForThisType: boolean;
+}
+
 export function DefenseGrid(): JSX.Element {
   const nodes = useDefenseGridStore((state) => state.nodes);
   const edges = useDefenseGridStore((state) => state.edges);
@@ -51,16 +65,22 @@ export function DefenseGrid(): JSX.Element {
   const pendingPlacementTier = useDefenseGridStore((state) => state.pendingPlacementTier);
   const selectedForEdgeId = useDefenseGridStore((state) => state.selectedForEdgeId);
   const zoom = useDefenseGridStore((state) => state.zoom);
+  const panX = useDefenseGridStore((state) => state.panX);
+  const panY = useDefenseGridStore((state) => state.panY);
   const setPendingPlacement = useDefenseGridStore((state) => state.setPendingPlacement);
   const setPendingPlacementTier = useDefenseGridStore((state) => state.setPendingPlacementTier);
   const placeNodeAt = useDefenseGridStore((state) => state.placeNodeAt);
   const moveNode = useDefenseGridStore((state) => state.moveNode);
   const removeNode = useDefenseGridStore((state) => state.removeNode);
   const tapNodeForEdge = useDefenseGridStore((state) => state.tapNodeForEdge);
+  const setPan = useDefenseGridStore((state) => state.setPan);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const panDragRef = useRef<PanDragState | null>(null);
+  const paletteDragRef = useRef<PaletteDragState | null>(null);
   const [savedGraphJson, setSavedGraphJson] = useState<string | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
 
   /** Mouse-wheel / trackpad-pinch zoom, centered on nothing fancier than "zoom in place" (GDD
    * doesn't call for cursor-anchored zoom). Wired via a native, non-passive listener rather than
@@ -97,11 +117,22 @@ export function DefenseGrid(): JSX.Element {
     return { x: (clientDx * (VIEWBOX_WIDTH / rect.width)) / zoom, y: (clientDy * (VIEWBOX_HEIGHT / rect.height)) / zoom };
   }
 
+  /** Converts a screen point to a *world* point (the same DU space as node x/y) — the inverse of
+   * the canvas's own render transform `scale(zoom) translate(-panX, -panY)`: a world point p
+   * renders on screen at zoom*(p - pan), so screen point v is world point v/zoom + pan. */
   function clientToSvgPoint(clientX: number, clientY: number): { x: number; y: number } {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
-    return clientDeltaToSvgUnits(clientX - rect.left, clientY - rect.top);
+    const { x: dx, y: dy } = clientDeltaToSvgUnits(clientX - rect.left, clientY - rect.top);
+    return { x: dx + panX, y: dy + panY };
+  }
+
+  function isPointOverCanvas(clientX: number, clientY: number): boolean {
+    const svg = svgRef.current;
+    if (!svg) return false;
+    const rect = svg.getBoundingClientRect();
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   }
 
   function handleBackgroundClick(event: React.MouseEvent<SVGSVGElement>): void {
@@ -110,6 +141,33 @@ export function DefenseGrid(): JSX.Element {
     }
     const point = clientToSvgPoint(event.clientX, event.clientY);
     placeNodeAt(Math.round(point.x), Math.round(point.y));
+  }
+
+  /** Starts panning the camera when the player presses down on empty canvas background (not a
+   * node, not while a node type is armed for placement — that keeps the existing tap-to-place
+   * flow exactly as it was). Shares handlePointerMove/its DRAG_THRESHOLD_PX below with node
+   * dragging so a plain tap still reaches handleBackgroundClick's placement/tapNodeForEdge paths
+   * undisturbed. */
+  function handleBackgroundPointerDown(event: React.PointerEvent<SVGSVGElement>): void {
+    if (pendingPlacementType || event.target !== svgRef.current) {
+      return;
+    }
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic PointerEvent in tests, or an already-released capture — panning still tracks via
+      // the pointermove/pointerup listeners below, capture is just an extra reliability layer.
+    }
+    panDragRef.current = { startClientX: event.clientX, startClientY: event.clientY, startPanX: panX, startPanY: panY, moved: false };
+    setIsPanning(true);
+  }
+
+  function handleBackgroundPointerUp(event: React.PointerEvent<SVGSVGElement>): void {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    panDragRef.current = null;
+    setIsPanning(false);
   }
 
   function handleNodePointerDown(node: GridNode, event: React.PointerEvent<SVGGElement>): void {
@@ -129,15 +187,28 @@ export function DefenseGrid(): JSX.Element {
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>): void {
     const drag = dragRef.current;
-    if (!drag) return;
-    const node = nodes.find((candidate) => candidate.id === drag.id);
-    if (!node || node.fixed) return;
-    const { x: dx, y: dy } = clientDeltaToSvgUnits(event.clientX - drag.pointerStartX, event.clientY - drag.pointerStartY);
-    if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+    if (drag) {
+      const node = nodes.find((candidate) => candidate.id === drag.id);
+      if (!node || node.fixed) return;
+      const { x: dx, y: dy } = clientDeltaToSvgUnits(event.clientX - drag.pointerStartX, event.clientY - drag.pointerStartY);
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+        return;
+      }
+      drag.moved = true;
+      moveNode(drag.id, Math.round(drag.nodeStartX + dx), Math.round(drag.nodeStartY + dy));
       return;
     }
-    drag.moved = true;
-    moveNode(drag.id, Math.round(drag.nodeStartX + dx), Math.round(drag.nodeStartY + dy));
+
+    const pan = panDragRef.current;
+    if (!pan) return;
+    const { x: dx, y: dy } = clientDeltaToSvgUnits(event.clientX - pan.startClientX, event.clientY - pan.startClientY);
+    if (!pan.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+      return;
+    }
+    pan.moved = true;
+    // Grab-and-drag semantics (like dragging a node): moving the pointer right should reveal
+    // content that was off-screen to the left, so the camera itself moves left — pan decreases.
+    setPan(pan.startPanX - dx, pan.startPanY - dy);
   }
 
   function handleNodePointerUp(node: GridNode, event: React.PointerEvent<SVGGElement>): void {
@@ -167,15 +238,40 @@ export function DefenseGrid(): JSX.Element {
             data-testid="palette-node"
             className="payload-palette-block"
             aria-pressed={pendingPlacementType === entry.type}
-            draggable
-            onDragStart={(event) => {
-              setPendingPlacement(entry.type);
-              event.dataTransfer.setData(NODE_DRAG_MIME, entry.type);
-              event.dataTransfer.effectAllowed = "copy";
-            }}
-            onDragEnd={() => setPendingPlacement(null)}
             style={{ borderColor: entry.color }}
-            onClick={() => setPendingPlacement(pendingPlacementType === entry.type ? null : entry.type)}
+            onPointerDown={(event) => {
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              } catch {
+                // Synthetic PointerEvent in tests — pointerup below still fires on this element.
+              }
+              paletteDragRef.current = { wasArmedForThisType: pendingPlacementType === entry.type };
+              setPendingPlacement(entry.type);
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              const dragState = paletteDragRef.current;
+              paletteDragRef.current = null;
+              if (isPointOverCanvas(event.clientX, event.clientY)) {
+                // Released over the grid — treat the whole press as a drag-and-drop placement.
+                const point = clientToSvgPoint(event.clientX, event.clientY);
+                placeNodeAt(Math.round(point.x), Math.round(point.y));
+              } else if (dragState?.wasArmedForThisType) {
+                // A plain tap on an already-armed type disarms it (toggle-off), matching the old
+                // click behavior. A tap that newly armed it leaves it armed, waiting for a tap on
+                // the grid — the click-to-place fallback.
+                setPendingPlacement(null);
+              }
+            }}
+            onClick={(event) => {
+              // Keyboard activation (Enter/Space) fires "click" with no pointer event behind it
+              // (detail === 0) — pointerdown/up above already handles every real mouse/touch/pen
+              // press, so only keyboard needs this fallback toggle.
+              if (event.detail !== 0) return;
+              setPendingPlacement(pendingPlacementType === entry.type ? null : entry.type);
+            }}
           >
             {entry.label} ({getDefenseNodeCost(entry.type, entry.tiered ? 1 : undefined)}pt+)
           </button>
@@ -201,23 +297,13 @@ export function DefenseGrid(): JSX.Element {
           preserveAspectRatio="none"
           width="100%"
           height="420"
-          style={{ background: theme.backgroundPanel, cursor: pendingPlacementType ? "crosshair" : "default", touchAction: "none" }}
+          style={{ background: theme.backgroundPanel, cursor: pendingPlacementType ? "crosshair" : isPanning ? "grabbing" : "grab", touchAction: "none" }}
           onClick={handleBackgroundClick}
+          onPointerDown={handleBackgroundPointerDown}
           onPointerMove={handlePointerMove}
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes(NODE_DRAG_MIME)) {
-              event.preventDefault();
-            }
-          }}
-          onDrop={(event) => {
-            const draggedType = event.dataTransfer.getData(NODE_DRAG_MIME);
-            if (!draggedType) return;
-            event.preventDefault();
-            const point = clientToSvgPoint(event.clientX, event.clientY);
-            placeNodeAt(Math.round(point.x), Math.round(point.y));
-          }}
+          onPointerUp={handleBackgroundPointerUp}
         >
-          <g transform={`scale(${zoom})`}>
+          <g transform={`scale(${zoom}) translate(${-panX} ${-panY})`}>
             {edges.map((edge) => {
               const from = nodesById.get(edge.from);
               const to = nodesById.get(edge.to);

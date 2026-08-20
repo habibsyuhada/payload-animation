@@ -34,6 +34,11 @@ export interface DefenseGridState {
   readonly pendingPlacementTier: BlockTier;
   readonly selectedForEdgeId: number | null;
   readonly zoom: number;
+  /** World-space point (in the same DU coordinate space as node x/y) that the canvas's top-left
+   * corner is currently showing — i.e. the camera's position. Panning the canvas moves this;
+   * zooming does not. */
+  readonly panX: number;
+  readonly panY: number;
   readonly setPendingPlacement: (type: Exclude<DefenseNodeType, "entry" | "core"> | null) => void;
   readonly setPendingPlacementTier: (tier: BlockTier) => void;
   readonly placeNodeAt: (x: number, y: number) => void;
@@ -41,6 +46,7 @@ export interface DefenseGridState {
   readonly removeNode: (id: number) => void;
   readonly tapNodeForEdge: (id: number) => void;
   readonly setZoom: (zoom: number) => void;
+  readonly setPan: (x: number, y: number) => void;
   readonly reset: () => void;
 }
 
@@ -53,6 +59,8 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
   pendingPlacementTier: 1,
   selectedForEdgeId: null,
   zoom: 1,
+  panX: 0,
+  panY: 0,
 
   setPendingPlacement: (type) => set({ pendingPlacementType: type, selectedForEdgeId: null }),
   setPendingPlacementTier: (tier) => set({ pendingPlacementTier: tier }),
@@ -102,10 +110,11 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
     }),
 
   setZoom: (zoom) => set({ zoom: Math.max(0.5, Math.min(2, zoom)) }),
+  setPan: (x, y) => set({ panX: x, panY: y }),
 
   reset: () => {
     nextPlaceableId = FIRST_PLACEABLE_ID;
-    set({ nodes: INITIAL_NODES, edges: [], pendingPlacementType: null, pendingPlacementTier: 1, selectedForEdgeId: null, zoom: 1 });
+    set({ nodes: INITIAL_NODES, edges: [], pendingPlacementType: null, pendingPlacementTier: 1, selectedForEdgeId: null, zoom: 1, panX: 0, panY: 0 });
   },
 }));
 
