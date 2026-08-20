@@ -13,6 +13,7 @@ export interface VirusLabState {
   readonly chain: readonly ChainBlockInstance[];
   readonly setMovementKind: (kind: MovementBlockKind) => void;
   readonly addBlock: (kind: LogicBlockKind) => void;
+  readonly insertBlockAt: (kind: LogicBlockKind, targetIndex: number) => void;
   readonly removeBlock: (id: string) => void;
   readonly setBlockTier: (id: string, tier: BlockTier) => void;
   readonly moveBlock: (id: string, direction: "up" | "down") => void;
@@ -36,6 +37,14 @@ export const useVirusLabStore = create<VirusLabState>((set) => ({
     set((state) => ({
       chain: [...state.chain, { id: newInstanceId(), kind, tier: 1 }],
     })),
+
+  insertBlockAt: (kind, targetIndex) =>
+    set((state) => {
+      const chain = [...state.chain];
+      const clampedTarget = Math.max(0, Math.min(chain.length, targetIndex));
+      chain.splice(clampedTarget, 0, { id: newInstanceId(), kind, tier: 1 });
+      return { chain };
+    }),
 
   removeBlock: (id) =>
     set((state) => ({

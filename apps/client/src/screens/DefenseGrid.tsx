@@ -230,7 +230,7 @@ export function DefenseGrid(): JSX.Element {
         )}
       </section>
 
-      <button type="button" data-testid="save-defense" disabled={!validation.valid} onClick={() => setSavedGraphJson(JSON.stringify(defenseGraph))}>
+      <button type="button" data-testid="save-defense" className="payload-btn-primary" disabled={!validation.valid} onClick={() => setSavedGraphJson(JSON.stringify(defenseGraph))}>
         Simpan Topologi
       </button>
       {savedGraphJson && <p data-testid="save-confirmation">Tersimpan (lokal, {nodes.length} node, {edges.length} edge, Core id {CORE_ID}).</p>}

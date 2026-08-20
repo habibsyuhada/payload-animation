@@ -1,4 +1,4 @@
-import { getAccountTierConfig, RULESET_V1, simulate, type BattleResult, type BlockTier } from "@payload/sim";
+import { getAccountTierConfig, RULESET_V1, simulate, type BattleResult, type BlockTier, type LogicBlockKind } from "@payload/sim";
 import { useState } from "react";
 import { findLogicBlockEntry, findLogicBlockWeightKb, LOGIC_BLOCK_CATALOG, MOVEMENT_CATALOG, type BlockCategory } from "../data/blockCatalog.js";
 import { PRACTICE_DEFENSES } from "../data/practiceDefenses.js";
@@ -16,21 +16,36 @@ function categoryColor(category: BlockCategory): string {
   return category === "movement" ? theme.faction.movement : theme.faction[category];
 }
 
+/** Custom drag mime type carrying a palette block's kind — distinct from the plain-text mime the chain rows themselves use to carry their instance id (see BlockChainRow's own onDragStart), so a row's onDrop can tell "new block from the palette" apart from "reorder an existing block" without ambiguity. */
+const NEW_BLOCK_MIME = "application/x-block-kind";
+
 function BlockChainRow({ block, index, total }: { block: ChainBlockInstance; index: number; total: number }): JSX.Element {
   const entry = findLogicBlockEntry(block.kind);
   const moveBlock = useVirusLabStore((state) => state.moveBlock);
   const removeBlock = useVirusLabStore((state) => state.removeBlock);
   const setBlockTier = useVirusLabStore((state) => state.setBlockTier);
+  const [isDropTarget, setIsDropTarget] = useState(false);
 
   return (
     <li
-      className="payload-chain-row"
+      className={`payload-chain-row${isDropTarget ? " payload-chain-row--drop-target" : ""}`}
       data-testid="chain-row"
       draggable
       onDragStart={(event) => event.dataTransfer.setData("text/plain", block.id)}
-      onDragOver={(event) => event.preventDefault()}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setIsDropTarget(true);
+      }}
+      onDragLeave={() => setIsDropTarget(false)}
       onDrop={(event) => {
         event.preventDefault();
+        event.stopPropagation();
+        setIsDropTarget(false);
+        const newBlockKind = event.dataTransfer.getData(NEW_BLOCK_MIME);
+        if (newBlockKind) {
+          useVirusLabStore.getState().insertBlockAt(newBlockKind as LogicBlockKind, index);
+          return;
+        }
         const draggedId = event.dataTransfer.getData("text/plain");
         if (draggedId && draggedId !== block.id) {
           useVirusLabStore.getState().reorderTo(draggedId, index);
@@ -69,7 +84,9 @@ export function VirusLab(): JSX.Element {
   const setMovementKind = useVirusLabStore((state) => state.setMovementKind);
   const chain = useVirusLabStore((state) => state.chain);
   const addBlock = useVirusLabStore((state) => state.addBlock);
+  const insertBlockAt = useVirusLabStore((state) => state.insertBlockAt);
   const [results, setResults] = useState<readonly { defenseId: string; label: string; result: BattleResult }[] | null>(null);
+  const [isDraggingPaletteBlock, setIsDraggingPaletteBlock] = useState(false);
 
   const weightKb = totalWeightKb({ movementKind, chain });
   const overBudget = weightKb > PAYLOAD_BUDGET_KB;
@@ -117,7 +134,22 @@ export function VirusLab(): JSX.Element {
           <div key={category}>
             <h3 style={{ color: categoryColor(category) }}>{category}</h3>
             {LOGIC_BLOCK_CATALOG.filter((entry) => entry.category === category).map((entry) => (
-              <button key={entry.kind} type="button" data-testid="add-block" onClick={() => addBlock(entry.kind)}>
+              <button
+                key={entry.kind}
+                type="button"
+                data-testid="add-block"
+                className="payload-palette-block"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(NEW_BLOCK_MIME, entry.kind);
+                  event.dataTransfer.setData("text/plain", `new-block:${entry.kind}`);
+                  event.dataTransfer.effectAllowed = "copy";
+                  setIsDraggingPaletteBlock(true);
+                }}
+                onDragEnd={() => setIsDraggingPaletteBlock(false)}
+                onClick={() => addBlock(entry.kind)}
+                style={{ borderLeft: `3px solid ${categoryColor(category)}` }}
+              >
                 + {entry.label}
               </button>
             ))}
@@ -125,10 +157,26 @@ export function VirusLab(): JSX.Element {
         ))}
       </section>
 
-      <section data-testid="chain-builder">
+      <section
+        data-testid="chain-builder"
+        className={`payload-chain-builder${isDraggingPaletteBlock ? " payload-chain-builder--drop-active" : ""}`}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes(NEW_BLOCK_MIME)) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={(event) => {
+          const newBlockKind = event.dataTransfer.getData(NEW_BLOCK_MIME);
+          if (newBlockKind) {
+            event.preventDefault();
+            insertBlockAt(newBlockKind as LogicBlockKind, chain.length);
+          }
+          setIsDraggingPaletteBlock(false);
+        }}
+      >
         <h2>Rantai Blok ({chain.length})</h2>
         {chain.length === 0 ? (
-          <p>Belum ada blok logika ditambahkan.</p>
+          <p>Belum ada blok logika ditambahkan. Seret blok dari atas ke sini, atau klik untuk menambahkan.</p>
         ) : (
           <ol className="payload-chain-list">
             {chain.map((block, index) => (
@@ -139,7 +187,7 @@ export function VirusLab(): JSX.Element {
       </section>
 
       <section data-testid="dry-run">
-        <button type="button" data-testid="run-dry-simulation" disabled={overBudget} onClick={runDrySimulation}>
+        <button type="button" data-testid="run-dry-simulation" className="payload-btn-primary" disabled={overBudget} onClick={runDrySimulation}>
           Simulasi Kering vs 3 Latihan
         </button>
         {results && (
