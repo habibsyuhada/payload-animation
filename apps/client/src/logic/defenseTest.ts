@@ -1,5 +1,5 @@
 import type { Layout } from "@payload/replay";
-import { getAccountTierConfig, RULESET_V1, simulate, validateDefenseGraph, type BattleLog, type DefenseGraph, type GraphValidationResult } from "@payload/sim";
+import { getAccountTierConfig, RULESET_V2, simulate, validateDefenseGraph, type BattleLog, type DefenseGraph, type GraphValidationResult } from "@payload/sim";
 import { GAUNTLET_VIRUSES, type GauntletVirus } from "../data/gauntletViruses.js";
 import { linksFor, type DefendNode } from "../state/defendStore.js";
 
@@ -12,11 +12,14 @@ import { linksFor, type DefendNode } from "../state/defendStore.js";
  * enough to prove breachability, and because the sim is deterministic that win is reproducible
  * forever from (rulesetVersion, seed, virus) — which is exactly what makes it worth showing the
  * player as a replay instead of just a percentage.
+ *
+ * V7.5: the gauntlet now runs on ruleset v2, so every showcase log carries `rule-fired` events and
+ * the result window can light up the exact rule that got an attacker through.
  */
 
 /** No account-tier system yet (Fase 4/5) — same tier-1 placeholder the other screens use. */
 const ACCOUNT_TIER = 1;
-const TIER_CONFIG = getAccountTierConfig(RULESET_V1, ACCOUNT_TIER);
+const TIER_CONFIG = getAccountTierConfig(RULESET_V2, ACCOUNT_TIER);
 /** Enough seeds to separate "impossible" from "unlucky once" without making the run feel slow:
  * 5 viruses x 24 seeds is ~120 simulations, a few tens of milliseconds on a phone. */
 export const SEEDS_PER_VIRUS = 24;
@@ -103,7 +106,7 @@ function runTrial(virus: GauntletVirus, graph: DefenseGraph): VirusTrial {
   let firstWin: BattleLog | null = null;
   let closestLoss: BattleLog | null = null;
   for (let i = 0; i < SEEDS_PER_VIRUS; i += 1) {
-    const log = simulate({ rulesetVersion: "v1", seed: SEED_BASE + i, virus: virus.virus, defense: graph });
+    const log = simulate({ rulesetVersion: "v2", seed: SEED_BASE + i, virus: virus.virus, defense: graph });
     if (log.result.winner === "attacker") {
       wins += 1;
       firstWin ??= log;
@@ -133,7 +136,7 @@ function pickShowcase(trials: readonly VirusTrial[]): VirusTrial {
  * simulations at roughly a third of a millisecond each. */
 export function runDefenseTest(nodes: readonly DefendNode[]): DefenseTestReport {
   const graph = toDefenseGraph(nodes);
-  const validation = validateDefenseGraph(graph, RULESET_V1, ACCOUNT_TIER);
+  const validation = validateDefenseGraph(graph, RULESET_V2, ACCOUNT_TIER);
   const trials = GAUNTLET_VIRUSES.map((virus) => runTrial(virus, graph));
   const breachCount = trials.filter((trial) => trial.wins > 0).length;
   const verdict: DefenseVerdict = breachCount === 0 ? "impenetrable" : trials.every((trial) => trial.winrate >= TOO_EASY_WINRATE) ? "too-easy" : "breachable";

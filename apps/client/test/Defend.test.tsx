@@ -229,21 +229,46 @@ describe("Defend page", () => {
     );
   });
 
-  it("lists each attacker's logic blocks, movement first", async () => {
+  it("lists each attacker's event sheet as rules, in the order the engine reads them", async () => {
     await page.getByTestId("defend-test").click();
     await findByTestId("defend-test-trials");
 
     const ghost = document.querySelector("[data-testid=defend-trial-loadout][data-virus=ghost-crawler]");
     expect(ghost).not.toBeNull();
-    const chips = [...ghost!.querySelectorAll("li")].map((chip) => chip.textContent?.trim());
-    // Its movement block leads, then the loadout in order — the same names Virus Lab builds from.
-    expect(chips[0]).toBe("Backtrack");
-    expect(chips).toContain("Cloak I");
-    expect(chips).toContain("Self Repair I");
+    const rules = [...ghost!.querySelectorAll("li")].map((chip) => chip.textContent?.trim());
+    // Condition first, then what it does — the same vocabulary Virus Lab builds from.
+    expect(rules[0]).toBe("Ada Honeypot dekat → Jalan memutari bahaya");
+    expect(rules[1]).toContain("SELALU →");
+    expect(rules[1]).toContain("Self Repair");
+    // Each row is addressable by the path the sim logs `rule-fired` under.
+    expect([...ghost!.querySelectorAll("li")].map((chip) => chip.getAttribute("data-rule-path"))).toEqual(["0", "1"]);
 
-    // Tiers are shown, so two builds carrying the same block at different strengths read apart.
+    // Tiers are shown, so two builds carrying the same action at different strengths read apart.
     const survivor = document.querySelector("[data-testid=defend-trial-loadout][data-virus=survivor]");
-    expect([...survivor!.querySelectorAll("li")].map((chip) => chip.textContent?.trim())).toContain("Self Repair II");
+    expect([...survivor!.querySelectorAll("li")].map((chip) => chip.textContent?.trim()).join(" ")).toContain("Self Repair II");
+  });
+
+  it("lights the attacker's rule chip on the ticks that rule actually fires", async () => {
+    await page.getByTestId("defend-test").click();
+    await findByTestId("defend-playback-controls");
+
+    // The showcase battle is playing; somewhere in it, some rule of the attacker on screen has to
+    // fire — a sheet that never fires is a sheet that never did anything.
+    await vi.waitFor(
+      () => {
+        const firing = document.querySelectorAll("[data-testid=defend-trial-rule][data-firing=true]");
+        if (firing.length === 0) {
+          throw new Error("no rule lit yet");
+        }
+      },
+      { timeout: 6000 },
+    );
+
+    // Only the attacker being played back lights up — the other four sheets stay dark.
+    const litVirusIds = new Set(
+      [...document.querySelectorAll("[data-testid=defend-trial-rule][data-firing=true]")].map((chip) => chip.closest("[data-testid=defend-trial-loadout]")?.getAttribute("data-virus")),
+    );
+    expect(litVirusIds.size).toBe(1);
   });
 
   it("can pause and scrub the battle, and scrubbing back restores the health it had then", async () => {

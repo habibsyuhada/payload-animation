@@ -1,4 +1,4 @@
-import { compileTimeline, sampleCoreHp, sampleIntegrity, samplePosition, type Timeline, type Vec2 } from "@payload/replay";
+import { compileTimeline, rulesFiringAt, sampleCoreHp, sampleIntegrity, samplePosition, type Timeline, type Vec2 } from "@payload/replay";
 import type { BattleLog } from "@payload/sim";
 import type { DefendNode } from "../state/defendStore.js";
 
@@ -54,6 +54,9 @@ export interface PlaybackFrame {
   readonly recentHits: readonly { readonly damage: number; readonly progress: number }[];
   /** Damage the virus dealt to nodes in the same window — what the Core losing HP looks like. */
   readonly nodeHits: readonly NodeHit[];
+  /** Rule ids (row paths, see gauntletViruses.ts) whose actions had an effect within the same
+   * window — what lights the attacker's rule chips as the battle plays (ADR 0006 §6). */
+  readonly firedRuleIds: ReadonlySet<string>;
   readonly done: boolean;
 }
 
@@ -126,6 +129,7 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
     // One number per victim, the freshest, reads as a steady beat of damage instead of a pile.
     recentHits: newestPerKey(recentHits, () => "virus"),
     nodeHits: newestPerKey(nodeHits, (hit) => String(hit.nodeId)),
+    firedRuleIds: rulesFiringAt(timeline, t, EFFECT_WINDOW_SECONDS),
     done: t >= playbackDurationSeconds(timeline),
   };
 }

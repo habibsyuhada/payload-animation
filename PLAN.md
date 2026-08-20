@@ -178,7 +178,7 @@ diputar (DoD #3).
       nesting maksimal 3 level.
 - [x] **V7.4** `tools/balance-lab`: generator sheet acak + pencarian kombo dominan di CI —
       prasyarat rilis v2 ke pemain (GDD risiko "kombinatorik blok meledak").
-- [ ] **V7.5** Tulis ulang gauntlet Defend (`gauntletViruses.ts`) + arketipe balance-lab sebagai
+- [x] **V7.5** Tulis ulang gauntlet Defend (`gauntletViruses.ts`) + arketipe balance-lab sebagai
       sheet v2, dan sorot `rule-fired` di replay (chip aturan menyala saat aturannya menembak).
 
 ---

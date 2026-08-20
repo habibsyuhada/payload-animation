@@ -47,6 +47,18 @@ export interface TimelineMarker {
   readonly amount?: number;
 }
 
+/**
+ * A ruleset v2 sheet rule firing at a moment in time (sim's `rule-fired` event, ADR 0006 §6).
+ * Kept off `markers` on purpose: every marker kind is about a place on the map, and a rule is
+ * about a place in the *sheet* — a renderer that lumped them together would have to filter one
+ * out of the other on every frame. `ruleId` is whatever the sim logged: the sheet author's own id
+ * when they set one, otherwise the row's path ("2.0").
+ */
+export interface RuleFiring {
+  readonly t: number;
+  readonly ruleId: string;
+}
+
 /** A defense node's static (never-moving) render data — draw.ts needs this without a separate layout param. */
 export interface StaticNode {
   readonly id: number;
@@ -72,6 +84,8 @@ export interface Timeline {
   /** The Core's health over time, same 0..1 shape. The battle is won when this hits 0, so it is
    * the other half of the story a health bar tells. */
   readonly coreHp: readonly Keyframe<number>[];
+  /** Empty for every v1 log — the engine that produced them has no rules to fire. */
+  readonly ruleFirings: readonly RuleFiring[];
 }
 
 /**
@@ -214,6 +228,10 @@ function compileCoreHpTrack(log: BattleLog): Keyframe<number>[] {
   return keyframes;
 }
 
+function compileRuleFirings(events: readonly BattleEvent[]): RuleFiring[] {
+  return events.filter((event) => event.type === "rule-fired").map((event) => ({ t: event.tick * TICK_SECONDS, ruleId: event.actor }));
+}
+
 export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
   const lastEvent = log.events[log.events.length - 1];
   const staticNodes: StaticNode[] = log.input.defense.nodes.map((node) => ({
@@ -235,7 +253,23 @@ export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
     markers: compileMarkers(log.events, new Set(staticNodes.map((node) => node.id))),
     virusIntegrity: compileVirusIntegrityTrack(log.events),
     coreHp: compileCoreHpTrack(log),
+    ruleFirings: compileRuleFirings(log.events),
   };
+}
+
+/**
+ * Which rules were firing at T, within `windowSeconds` of their moment. A window rather than an
+ * exact match because a rule fires for one 50ms tick and nobody can see a 50ms flash — the same
+ * reason the map's hit effects have one.
+ */
+export function rulesFiringAt(timeline: Timeline, t: number, windowSeconds: number): Set<string> {
+  const firing = new Set<string>();
+  for (const rule of timeline.ruleFirings) {
+    if (rule.t <= t && t - rule.t <= windowSeconds) {
+      firing.add(rule.ruleId);
+    }
+  }
+  return firing;
 }
 
 /** Health at T as a 0..1 ratio — a step function, not an interpolation: a hit is instant, and
