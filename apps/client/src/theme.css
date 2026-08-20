@@ -382,6 +382,454 @@ select {
   color: var(--color-text-muted);
 }
 
+/* Defend page — a genuinely full-screen editor: it covers the app header and bottom nav (its own
+   "← Keluar" link is the way back), so the camera gets the entire viewport on a phone. */
+.payload-defend {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--color-background);
+  overscroll-behavior: none;
+}
+
+.payload-defend-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* Hands every pan/pinch to the pointer handlers instead of the browser's own scroll & zoom. */
+  touch-action: none;
+  /* A pan drag across the canvas must not start highlighting node labels as it goes. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.payload-defend-viewport:active {
+  cursor: grabbing;
+}
+
+.payload-defend-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.payload-defend-topbar {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.payload-defend-exit {
+  pointer-events: auto;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: var(--color-background-panel-raised);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.payload-defend-zoom {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(18, 20, 28, 0.75);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.payload-defend-test-btn {
+  /* The topbar itself is pointer-events: none so camera drags pass through it — every control
+     inside has to opt back in, same as .payload-defend-exit. */
+  pointer-events: auto;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.78rem;
+  background: rgba(26, 30, 42, 0.9);
+}
+
+.payload-modal--wide {
+  max-width: 30rem;
+}
+
+/* Results sheet: pinned along the bottom, deliberately not a modal — the battle it reports on is
+   playing on the map above it, so it must never cover the map. */
+.payload-defend-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  padding: 0.7rem 0.8rem calc(0.7rem + env(safe-area-inset-bottom));
+  background: rgba(18, 20, 28, 0.95);
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.payload-defend-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.payload-defend-sheet-head .payload-defend-verdict {
+  flex: 1;
+  margin: 0;
+}
+
+.payload-defend-sheet-close {
+  margin: 0;
+  padding: 0.3rem 0.55rem;
+  flex-shrink: 0;
+}
+
+.payload-defend-playback-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.payload-defend-playback-btn {
+  margin: 0;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.payload-defend-playback-scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-faction-movement);
+}
+
+.payload-defend-playback-speed {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.35rem;
+}
+
+.payload-defend-sheet-details {
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-sheet-details summary {
+  cursor: pointer;
+}
+
+.payload-defend-loadout {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+}
+
+.payload-defend-block {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: 0.3rem;
+  background: var(--color-background-panel-raised);
+  color: var(--color-text);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.payload-defend-trial-watch {
+  margin: 0;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.68rem;
+}
+
+.payload-defend-budget-note {
+  margin: -0.4rem 0 0.8rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-budget-note strong {
+  color: var(--color-text);
+}
+
+.payload-defend-meter {
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  font-size: 0.75rem;
+}
+
+.payload-defend-meter strong {
+  color: var(--color-text);
+  font-size: 0.78rem;
+}
+
+.payload-defend-budget--empty {
+  color: var(--color-faction-attack);
+}
+
+.payload-defend-verdict {
+  margin: 0 0 0.9rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.6rem;
+  border-left: 3px solid var(--color-border);
+  background: var(--color-background-panel-raised);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.payload-defend-verdict--impenetrable {
+  border-left-color: var(--color-faction-attack);
+}
+
+.payload-defend-verdict--breachable {
+  border-left-color: var(--color-faction-stealth);
+}
+
+.payload-defend-verdict--too-easy {
+  border-left-color: var(--color-faction-sensor);
+}
+
+.payload-defend-showcase-caption {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.payload-defend-showcase-caption strong {
+  color: var(--color-text);
+}
+
+.payload-defend-trials {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.payload-defend-trials small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-trial-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.payload-defend-trial-win {
+  color: var(--color-faction-stealth);
+  font-weight: 600;
+}
+
+.payload-defend-trial-loss {
+  color: var(--color-faction-attack);
+  font-weight: 600;
+}
+
+.payload-defend-trial-track {
+  height: 0.35rem;
+  margin-top: 0.25rem;
+  border-radius: 999px;
+  background: var(--color-background-panel-raised);
+  overflow: hidden;
+}
+
+.payload-defend-trial-fill {
+  display: block;
+  height: 100%;
+}
+
+.payload-defend-structural {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-structural summary {
+  cursor: pointer;
+}
+
+.payload-defend-structural ul {
+  margin: 0.4rem 0;
+  padding-left: 1.1rem;
+  line-height: 1.4;
+}
+
+/* The outer halo of a connector, breathing slowly so a live link reads as powered rather than
+   drawn-on. Only the widest, faintest stroke animates — the bright core stays steady. */
+@keyframes payload-defend-link-pulse {
+  from {
+    opacity: 0.12;
+  }
+  to {
+    opacity: 0.34;
+  }
+}
+
+.payload-defend-link-halo {
+  animation: payload-defend-link-pulse 2.4s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payload-defend-link-halo {
+    animation: none;
+  }
+}
+
+/* Edge marker for a node the camera has left off-screen: a pill pinned just inside the viewport
+   edge, in that node's direction. Tap to bring the node back to the middle. */
+.payload-defend-offscreen {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 999px;
+  background: rgba(26, 30, 42, 0.92);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
+
+/* Hover lift would fight the translate(-50%, -50%) that centers the pill on its anchor point. */
+.payload-defend-offscreen:hover:not(:disabled) {
+  transform: translate(-50%, -50%);
+  background: rgba(35, 40, 56, 0.95);
+}
+
+.payload-defend-offscreen-arrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.payload-defend-offscreen-glyph {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.payload-defend-add-btn {
+  position: absolute;
+  right: 0.75rem;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.4rem;
+  line-height: 1;
+  background: var(--color-faction-movement);
+  border-color: var(--color-faction-movement);
+  color: #061018;
+  z-index: 3;
+}
+
+.payload-defend-hint {
+  position: absolute;
+  left: 0.75rem;
+  /* Clear of the add-node button in the corner. */
+  right: 4.75rem;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.6rem;
+  background: rgba(26, 30, 42, 0.85);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.payload-defend-actions {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: 0.7rem;
+  background: rgba(26, 30, 42, 0.92);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  /* Above the hint strip and the add-node button, never tucked behind them. */
+  z-index: 4;
+}
+
+.payload-defend-action-btn {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0;
+  padding: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+  touch-action: none;
+}
+
+.payload-defend-action-btn--danger {
+  border-color: var(--color-faction-attack);
+  color: var(--color-faction-attack);
+}
+
+.payload-defend-detail-body {
+  margin: 0 0 0.9rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.payload-defend-detail-stats {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0 0 1rem;
+}
+
+.payload-defend-detail-stats dt {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.payload-defend-detail-stats dd {
+  margin: 0.15rem 0 0;
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .payload-modal-backdrop {
   position: fixed;
   inset: 0;

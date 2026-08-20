@@ -160,6 +160,27 @@ Aturan main per sesi: baca PLAN.md + RULESET.md → kerjakan 1–3 task → test
 - [ ] **P6.5** Telemetri privacy-sane (funnel onboarding, retensi D1/D7) + crash reporting.
 - [ ] **P6.6** Store listing + soft launch 1 negara → ukur retensi & winrate live → patch ruleset v2.
 
+### Fase 7 — Ruleset v2: virus sebagai event sheet (keputusan desain sudah diambil, lihat docs/ADR/0006)
+
+Menggantikan model "rantai blok" v1 (ADR 0002) dengan event sheet bersarang ala GDevelop —
+kondisi (AND) → aksi, dievaluasi tiap tick, mengatur **semua** perilaku virus termasuk gerakan.
+Alasannya ada di ADR 0006: model v1 tidak bisa mengekspresikan contoh GDD §4.2 sendiri
+(`IF Honeypot → Backtrack`), dan urutan blok jadi jebakan tersembunyi (rantai isi identik, beda
+urutan → battle 53 tick vs 124 tick). v1 dibekukan, bukan dihapus: log lama wajib tetap bisa
+diputar (DoD #3).
+
+- [ ] **V7.1** Tipe + engine v2 di `packages/sim`: `VirusProgram`, evaluasi depth-first per tick,
+      slot-vs-cumulative action, `once` scope, event `rule-fired`. `simulate()` dispatch by
+      `rulesetVersion`; golden log v1 wajib tetap byte-identical.
+- [ ] **V7.2** Katalog kondisi/aksi + bobot KB per kondisi & per aksi (+ batas jumlah event per
+      account tier) di `docs/RULESET.md` v2.
+- [ ] **V7.3** Virus Lab ditulis ulang jadi editor event sheet tap-driven (bukan drag bebas),
+      nesting maksimal 3 level.
+- [ ] **V7.4** `tools/balance-lab`: generator sheet acak + pencarian kombo dominan di CI —
+      prasyarat rilis v2 ke pemain (GDD risiko "kombinatorik blok meledak").
+- [ ] **V7.5** Tulis ulang gauntlet Defend (`gauntletViruses.ts`) + arketipe balance-lab sebagai
+      sheet v2, dan sorot `rule-fired` di replay (chip aturan menyala saat aturannya menembak).
+
 ---
 
 ## 4. Definition of Done (berlaku semua task)

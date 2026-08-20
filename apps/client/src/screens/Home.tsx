@@ -8,6 +8,11 @@ export function Home(): JSX.Element {
       <Link to="/onboarding" data-testid="home-start-onboarding">
         Mulai Tutorial (5 battle)
       </Link>
+      <p>
+        <Link to="/defend" data-testid="home-open-defend">
+          Buka Defend (layar penuh)
+        </Link>
+      </p>
     </Screen>
   );
 }

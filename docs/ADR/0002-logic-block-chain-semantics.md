@@ -1,6 +1,8 @@
 # ADR 0002 — Logic block chain semantics (S1.5)
 
-**Status:** accepted (v1, subject to revision once C3.2's Virus Lab needs richer configurability)
+**Status:** accepted for ruleset v1, now **frozen** — superseded from v2 onward by ADR 0006
+(event-sheet virus programming). This document remains the specification of the v1 engine, which
+stays in the codebase so v1 battle logs keep replaying (DoD #3).
 **Context:** `packages/sim/src/engine.ts`, `packages/sim/src/blocks/`
 
 ## Problem

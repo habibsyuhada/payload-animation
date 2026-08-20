@@ -8,6 +8,7 @@ import { Replay } from "./screens/Replay.js";
 import { Research } from "./screens/Research.js";
 import { League } from "./screens/League.js";
 import { Onboarding } from "./screens/Onboarding.js";
+import { Defend } from "./screens/Defend.js";
 
 /**
  * The 7 screens (GDD §12), route paths, and short nav labels. `HashRouter` (not `BrowserRouter`)
@@ -24,8 +25,15 @@ const NAV_ITEMS = [
   { path: "/league", label: "League", element: <League /> },
 ] as const;
 
-/** Onboarding (C3.4) isn't one of the 7 main nav screens — it's a one-time flow launched from Home, not something a returning player navigates back into via the bottom bar. */
-const EXTRA_ROUTES = [{ path: "/onboarding", element: <Onboarding /> }] as const;
+/**
+ * Routes that deliberately stay out of the bottom nav: Onboarding (C3.4) is a one-time flow
+ * launched from Home, and Defend is a full-screen editor that covers the header and nav entirely
+ * (it carries its own "← Keluar" link back to HQ).
+ */
+const EXTRA_ROUTES = [
+  { path: "/onboarding", element: <Onboarding /> },
+  { path: "/defend", element: <Defend /> },
+] as const;
 
 function AppShell(): JSX.Element {
   const activeScreenTitle = useAppShellStore((state) => state.activeScreenTitle);

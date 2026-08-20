@@ -1,7 +1,7 @@
 import { simulate } from "@payload/sim";
 import type { BattleInput, DefenseGraph, DefenseNode } from "@payload/sim";
 import { describe, expect, it } from "vitest";
-import { compileTimeline, findTrack, samplePosition, type Layout } from "../src/compile.js";
+import { compileTimeline, findTrack, sampleCoreHp, sampleIntegrity, samplePosition, type Layout } from "../src/compile.js";
 
 // entry(1)/(2) --400du--> router(3) --600du--> core(4), speed 50: arrives router tick 8,
 // departs tick 9, arrives core tick 21 (matches packages/sim's engine.test.ts Scenario 1).
@@ -120,5 +120,75 @@ describe("samplePosition", () => {
     }
 
     expect(scrubbedResults).toEqual(forwardResults);
+  });
+
+  it("compiles the virus's health as a track that starts full and only moves when the log says so", () => {
+    // A firewall the virus has to breach, so there is real damage in the log to compile from.
+    const guarded: DefenseGraph = {
+      ...GRAPH,
+      nodes: [
+        { id: 1, type: "entry" },
+        { id: 2, type: "entry" },
+        { id: 3, type: "firewall", tier: 1 },
+        { id: 4, type: "core" },
+      ] satisfies DefenseNode[],
+    };
+    const timeline = compileTimeline(simulate({ ...INPUT, defense: guarded }), LAYOUT);
+
+    expect(sampleIntegrity(timeline, 0)).toBe(1);
+    const damaged = timeline.markers.find((marker) => marker.kind === "damage");
+    expect(damaged).toBeDefined();
+    // Health is a step function: unchanged right up to the hit, lower right after it.
+    expect(sampleIntegrity(timeline, damaged!.t - 0.001)).toBeGreaterThan(sampleIntegrity(timeline, damaged!.t));
+    expect(sampleIntegrity(timeline, timeline.durationSeconds)).toBeLessThanOrEqual(1);
+  });
+
+  it("carries the damage amount on the marker, so a renderer never has to parse it out of the label", () => {
+    const guarded: DefenseGraph = {
+      ...GRAPH,
+      nodes: [
+        { id: 1, type: "entry" },
+        { id: 2, type: "entry" },
+        { id: 3, type: "firewall", tier: 1 },
+        { id: 4, type: "core" },
+      ] satisfies DefenseNode[],
+    };
+    const timeline = compileTimeline(simulate({ ...INPUT, defense: guarded }), LAYOUT);
+    const damaged = timeline.markers.find((marker) => marker.kind === "damage" && marker.nodeId === 3);
+    expect(damaged?.amount).toBeGreaterThan(0);
+    // The label leads with the actor's node id — reading the number out of it would report 3.
+    expect(damaged!.label.startsWith("3 ")).toBe(true);
+    expect(damaged!.amount).not.toBe(3);
+  });
+
+  it("compiles the Core's health from the damage aimed at it, scaled by the coreHp the log itself carries", () => {
+    const timeline = compileTimeline(simulate(INPUT), LAYOUT);
+
+    expect(sampleCoreHp(timeline, 0)).toBe(1);
+    const drains = timeline.markers.filter((marker) => marker.kind === "node-hit" && marker.nodeId === 4);
+    expect(drains.length).toBeGreaterThan(0);
+    // Steps down at the first drain and keeps going; the battle is won when it reaches zero.
+    expect(sampleCoreHp(timeline, drains[0]!.t - 0.001)).toBe(1);
+    expect(sampleCoreHp(timeline, drains[0]!.t)).toBeLessThan(1);
+    expect(sampleCoreHp(timeline, timeline.durationSeconds)).toBe(0);
+  });
+
+  it("keeps damage dealt TO a node separate from damage taken BY the virus", () => {
+    const guarded: DefenseGraph = {
+      ...GRAPH,
+      nodes: [
+        { id: 1, type: "entry" },
+        { id: 2, type: "entry" },
+        { id: 3, type: "firewall", tier: 1 },
+        { id: 4, type: "core" },
+      ] satisfies DefenseNode[],
+    };
+    const timeline = compileTimeline(simulate({ ...INPUT, defense: guarded }), LAYOUT);
+
+    // The firewall both deals damage to the virus and takes it — one node, two opposite stories.
+    expect(timeline.markers.some((marker) => marker.kind === "damage" && marker.nodeId === 3)).toBe(true);
+    expect(timeline.markers.some((marker) => marker.kind === "node-hit" && marker.nodeId === 3)).toBe(true);
+    // Core damage is never reported as the virus being hurt.
+    expect(timeline.markers.some((marker) => marker.kind === "damage" && marker.nodeId === 4)).toBe(false);
   });
 });
