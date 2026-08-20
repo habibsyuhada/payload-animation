@@ -207,6 +207,55 @@ describe("DefenseGrid", () => {
     await waitForEdgeCount(0);
   });
 
+  it("deletes an edge by clicking directly on its line, regardless of the active tool", async () => {
+    await armNodeViaModal("Router");
+    clickCanvasAt(260, 250);
+    await waitForNodeCount(4);
+    await page.getByTestId("tool-line").click();
+    tapNode(2);
+    tapNode(4);
+    await waitForEdgeCount(1);
+
+    await page.getByTestId("tool-hand").click(); // direct edge-click deletion isn't Line-tool-only
+    page.getByTestId("grid-edge").element().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await waitForEdgeCount(0);
+  });
+
+  it("shows a node's detail card on a clean tap under the Hand tool, and closes it on tapping again", async () => {
+    await armNodeViaModal("Firewall");
+    clickCanvasAt(260, 250);
+    await waitForNodeCount(4);
+    await page.getByTestId("tool-hand").click();
+
+    tapNode(4);
+    const detail = await findByTestId("node-detail");
+    expect(detail.textContent).toContain("Firewall");
+    expect(detail.textContent).toContain("Tier 1");
+
+    tapNode(4);
+    await vi.waitFor(() => {
+      if (page.getByTestId("node-detail").query()) {
+        throw new Error("detail card is still open");
+      }
+    });
+  });
+
+  it("closes an open node detail card when tapping empty background", async () => {
+    await armNodeViaModal("Router");
+    clickCanvasAt(260, 250);
+    await waitForNodeCount(4);
+    await page.getByTestId("tool-hand").click();
+
+    tapNode(4);
+    await findByTestId("node-detail");
+    clickCanvasAt(500, 450); // empty background, far from any node
+    await vi.waitFor(() => {
+      if (page.getByTestId("node-detail").query()) {
+        throw new Error("detail card is still open");
+      }
+    });
+  });
+
   it("does not link nodes on tap-tap while the Hand tool is active", async () => {
     await armNodeViaModal("Router");
     clickCanvasAt(260, 250);

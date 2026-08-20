@@ -53,6 +53,7 @@ export interface DefenseGridState {
   readonly moveNode: (id: number, x: number, y: number) => void;
   readonly removeNode: (id: number) => void;
   readonly tapNodeForEdge: (id: number) => void;
+  readonly removeEdge: (from: number, to: number) => void;
   readonly setZoom: (zoom: number) => void;
   readonly setPan: (x: number, y: number) => void;
   readonly reset: () => void;
@@ -126,6 +127,13 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
       const edges = existingIndex === -1 ? [...state.edges, { from, to }] : state.edges.filter((_, index) => index !== existingIndex);
       return { edges, selectedForEdgeId: null };
     }),
+
+  /** Direct delete — tapping the edge's own line on the grid (see grid-edge's onClick in
+   * DefenseGrid.tsx), independent of the Line tool's link/unlink-by-tapping-two-nodes gesture. */
+  removeEdge: (from, to) =>
+    set((state) => ({
+      edges: state.edges.filter((edge) => !((edge.from === from && edge.to === to) || (edge.from === to && edge.to === from))),
+    })),
 
   setZoom: (zoom) => set({ zoom: Math.max(0.5, Math.min(2, zoom)) }),
   setPan: (x, y) => set({ panX: x, panY: y }),

@@ -269,6 +269,44 @@ select {
   height: 0.7rem;
   border-radius: 999px;
   flex-shrink: 0;
+  margin-top: 0.2rem;
+  align-self: flex-start;
+}
+
+.payload-node-detail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.payload-node-detail-text strong {
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.payload-node-detail-text span {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.payload-strip-close-btn {
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.payload-grid-edge-hit {
+  cursor: pointer;
+}
+
+.payload-grid-edge-hit:hover line:last-of-type {
+  stroke: var(--color-faction-attack);
+  stroke-width: 3;
 }
 
 .payload-grid-canvas-wrap {

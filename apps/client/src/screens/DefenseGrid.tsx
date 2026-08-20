@@ -1,6 +1,6 @@
 import { getAccountTierConfig, getDefenseNodeCost, RULESET_V1, validateDefenseGraph, type BlockTier } from "@payload/sim";
 import { useEffect, useRef, useState } from "react";
-import { CORE_COLOR, CORE_SHAPE, ENTRY_COLOR, ENTRY_SHAPE, findPlaceableEntry, PLACEABLE_NODE_CATALOG, type NodeShape } from "../data/defenseNodeCatalog.js";
+import { CORE_COLOR, CORE_DESCRIPTION, CORE_SHAPE, ENTRY_COLOR, ENTRY_DESCRIPTION, ENTRY_SHAPE, findNodeTierDescription, findPlaceableEntry, PLACEABLE_NODE_CATALOG, type NodeShape } from "../data/defenseNodeCatalog.js";
 import { theme } from "../theme.js";
 import { CORE_ID, toDefenseGraph, useDefenseGridStore, type GridNode } from "../state/defenseGridStore.js";
 import { Screen } from "./Screen.js";
@@ -37,6 +37,18 @@ function nodeRadius(node: GridNode): number {
 
 function nodeCost(node: GridNode): number {
   return getDefenseNodeCost(node.type, node.tier);
+}
+
+function nodeLabel(node: GridNode): string {
+  if (node.type === "core") return "Core";
+  if (node.type === "entry") return "Entry";
+  return findPlaceableEntry(node.type).label;
+}
+
+function nodeDescription(node: GridNode): string {
+  if (node.type === "core") return CORE_DESCRIPTION;
+  if (node.type === "entry") return ENTRY_DESCRIPTION;
+  return findNodeTierDescription(findPlaceableEntry(node.type), node.tier);
 }
 
 /** Vertices of a regular polygon centered at (cx,cy) — `rotationDeg` of 0 puts the first vertex
@@ -124,6 +136,7 @@ export function DefenseGrid(): JSX.Element {
   const moveNode = useDefenseGridStore((state) => state.moveNode);
   const removeNode = useDefenseGridStore((state) => state.removeNode);
   const tapNodeForEdge = useDefenseGridStore((state) => state.tapNodeForEdge);
+  const removeEdge = useDefenseGridStore((state) => state.removeEdge);
   const setPan = useDefenseGridStore((state) => state.setPan);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -132,6 +145,13 @@ export function DefenseGrid(): JSX.Element {
   const [savedGraphJson, setSavedGraphJson] = useState<string | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [isNodeModalOpen, setNodeModalOpen] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+
+  // A stale detail card (Hand tool) or armed-strip (Node tool) doesn't make sense once the player
+  // switches tools — Line has neither.
+  useEffect(() => {
+    setSelectedNodeId(null);
+  }, [activeTool]);
 
   /** Mouse-wheel / trackpad-pinch zoom, centered on nothing fancier than "zoom in place" (GDD
    * doesn't call for cursor-anchored zoom). Wired via a native, non-passive listener rather than
@@ -189,11 +209,16 @@ export function DefenseGrid(): JSX.Element {
   }
 
   function handleBackgroundClick(event: React.MouseEvent<SVGSVGElement>): void {
-    if (!pendingPlacementType || event.target !== svgRef.current) {
+    if (event.target !== svgRef.current) {
       return;
     }
-    const point = clientToSvgPoint(event.clientX, event.clientY);
-    placeNodeAt(Math.round(point.x), Math.round(point.y));
+    if (pendingPlacementType) {
+      const point = clientToSvgPoint(event.clientX, event.clientY);
+      placeNodeAt(Math.round(point.x), Math.round(point.y));
+      return;
+    }
+    // Tapping empty background under Hand deselects whatever node's detail card is open.
+    setSelectedNodeId(null);
   }
 
   /** Panning the camera works no matter which tool is active — a Hand-tool-only restriction would
@@ -276,13 +301,19 @@ export function DefenseGrid(): JSX.Element {
       tapNodeForEdge(node.id);
       return;
     }
-    // Hand tool: dragging already relocated the node live in handlePointerMove — a clean
-    // (non-drag) tap on Hand has no separate effect, unlike the old always-on tap-to-link.
+    // Hand tool: dragging already relocated the node live in handlePointerMove. A clean
+    // (non-drag) tap instead selects the node — opens its detail card below the toolbar, showing
+    // what it does and what it cost; tapping the same node again (or empty background) closes it.
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (drag && !drag.moved) {
+      setSelectedNodeId((current) => (current === node.id ? null : node.id));
+    }
   }
 
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const armedEntry = pendingPlacementType ? findPlaceableEntry(pendingPlacementType) : null;
+  const selectedNode = selectedNodeId !== null ? (nodesById.get(selectedNodeId) ?? null) : null;
 
   return (
     <Screen title="Defense Grid" fullBleed>
@@ -345,6 +376,24 @@ export function DefenseGrid(): JSX.Element {
           </div>
         )}
 
+        {activeTool === "hand" && selectedNode && (
+          <div className="payload-armed-strip" data-testid="node-detail">
+            <span className="payload-armed-swatch" style={{ background: nodeColor(selectedNode) }} />
+            <div className="payload-node-detail-text">
+              <strong>
+                {nodeLabel(selectedNode)}
+                {selectedNode.tier ? ` · Tier ${selectedNode.tier}` : ""}
+                {" · "}
+                {nodeCost(selectedNode)}pt
+              </strong>
+              <span>{nodeDescription(selectedNode)}</span>
+            </div>
+            <button type="button" data-testid="node-detail-close" className="payload-strip-close-btn" onClick={() => setSelectedNodeId(null)} aria-label="Tutup detail node">
+              ✕
+            </button>
+          </div>
+        )}
+
         <div className="payload-grid-canvas-wrap">
           <svg
             ref={svgRef}
@@ -365,7 +414,22 @@ export function DefenseGrid(): JSX.Element {
                 const from = nodesById.get(edge.from);
                 const to = nodesById.get(edge.to);
                 if (!from || !to) return null;
-                return <line key={`${edge.from}-${edge.to}`} data-testid="grid-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={theme.border} strokeWidth={2} />;
+                return (
+                  <g
+                    key={`${edge.from}-${edge.to}`}
+                    className="payload-grid-edge-hit"
+                    data-testid="grid-edge-hit"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeEdge(edge.from, edge.to);
+                    }}
+                  >
+                    {/* Wide, unpainted-but-hit-testable stroke — a plain 2px line is too thin a
+                    target to reliably tap on a phone, so this is what actually catches the click. */}
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth={16} />
+                    <line data-testid="grid-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={theme.border} strokeWidth={2} />
+                  </g>
+                );
               })}
               {nodes.map((node) => (
                 <g
@@ -379,7 +443,7 @@ export function DefenseGrid(): JSX.Element {
                   onPointerUp={(event) => handleNodePointerUp(node, event)}
                   style={{ cursor: activeTool === "line" ? "pointer" : node.fixed ? "default" : "grab" }}
                 >
-                  <NodeGlyph shape={nodeShapeOf(node)} cx={node.x} cy={node.y} r={nodeRadius(node)} fill={nodeColor(node)} stroke={selectedForEdgeId === node.id ? theme.text : "none"} strokeWidth={3} />
+                  <NodeGlyph shape={nodeShapeOf(node)} cx={node.x} cy={node.y} r={nodeRadius(node)} fill={nodeColor(node)} stroke={selectedForEdgeId === node.id || selectedNodeId === node.id ? theme.text : "none"} strokeWidth={3} />
                   {!node.fixed && (
                     <text data-testid="grid-node-remove" x={node.x + nodeRadius(node)} y={node.y - nodeRadius(node)} fontSize={14} fill={theme.faction.attack} onClick={(event) => { event.stopPropagation(); removeNode(node.id); }} style={{ cursor: "pointer" }}>
                       ✕
