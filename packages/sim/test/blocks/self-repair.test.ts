@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getSelfRepairHealPerTick } from "../../src/blocks/self-repair.js";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 
 describe("getSelfRepairHealPerTick", () => {

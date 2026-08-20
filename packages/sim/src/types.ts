@@ -3,7 +3,7 @@
  * in docs/RULESET.md. Zero runtime deps — packages/sim stays pure.
  */
 
-export type RulesetVersion = "v1";
+export type RulesetVersion = "v1" | "v2";
 
 export type BlockTier = 1 | 2 | 3;
 
@@ -44,6 +44,96 @@ export interface VirusDesign {
   readonly blocks: readonly LogicBlock[];
 }
 
+/*
+ * --- Ruleset v2: the virus as a nested event sheet (docs/ADR/0006) ---
+ * v1's LogicBlock chain above is FROZEN, not replaced: old BattleLogs must stay replayable
+ * (PLAN.md DoD #3), so every v1 type keeps its exact shape and `simulate()` dispatches on
+ * BattleInput["rulesetVersion"] instead.
+ */
+
+/** Conditions are ANDed within an event; OR is two sibling events (ADR 0006 §1). */
+export type ConditionKind =
+  /** The node the virus is standing on right now — "node saat ini". Never true mid-transit. */
+  | "node-here-is"
+  /** The node the virus would travel to next — "node di depan" (ADR 0006 open question 2). */
+  | "node-ahead-is"
+  /** A Honeypot is within this condition's detection radius (the Detect Honeypot sensor, as a condition). */
+  | "honeypot-near"
+  /** An unspent Trap is within this condition's detection radius (Scan Ahead III, as a condition). */
+  | "trap-near"
+  | "integrity-below"
+  /** The virus currently carries a Scanner's "scanned" status. */
+  | "is-scanned"
+  /** The virus lost Integrity during the tick just resolved — Self Repair's v1 hidden gate, made
+   * visible. Named for the tick it can actually see: the sheet is evaluated before this tick's
+   * damage lands, so "this tick" would be a lie. */
+  | "took-damage-last-tick"
+  /** The virus is occupying a Breach Node (Firewall/Core) — Self Repair's other v1 hidden gate. */
+  | "on-breach-node"
+  /** The virus is standing on a node rather than crossing an edge. */
+  | "at-node";
+
+export type ActionKind =
+  // Movement — all four write the same movement slot (first writer this tick wins).
+  | "move-toward-core"
+  | "move-avoiding-hazards"
+  | "move-random"
+  | "move-back"
+  | "hold-position"
+  // Attack — cumulative.
+  | "brute-force"
+  | "exploit"
+  | "overload"
+  // Stealth — status slots.
+  | "cloak"
+  | "slow-crawl"
+  // Utility.
+  | "self-repair"
+  | "arm-decoy";
+
+/**
+ * How often an event may fire.
+ * - "battle": once per battle.
+ * - "node": once per node id the virus stands on (v1's `exploitedNodeIds` bookkeeping, generalized).
+ * - "arrival": once per arrival, so revisiting the same node re-arms it.
+ */
+export type OnceScope = "battle" | "node" | "arrival";
+
+export interface SheetCondition {
+  readonly kind: ConditionKind;
+  /** NOT, per condition — v2 has no OR/NOT groups (ADR 0006 §1). */
+  readonly negate?: boolean;
+  /** "node-here-is" / "node-ahead-is" only. Defaults to ["firewall"]. */
+  readonly targetNodeTypes?: readonly DefenseNodeType[];
+  /** "integrity-below" only — permille of starting Integrity. Defaults to 500. */
+  readonly integrityThresholdPermille?: number;
+  /** "honeypot-near" / "trap-near" only — detection radius tier. Defaults to 1. */
+  readonly tier?: BlockTier;
+}
+
+export interface SheetAction {
+  readonly kind: ActionKind;
+  /** Tiered actions only (attack/stealth/utility). Defaults to 1. */
+  readonly tier?: BlockTier;
+}
+
+export interface SheetEvent {
+  /** Stable id for `rule-fired` log events. Optional: the engine falls back to the row's path (e.g. "2.0"). */
+  readonly id?: string;
+  /** ANDed. An empty list means "always". */
+  readonly conditions: readonly SheetCondition[];
+  /** Run in order, top to bottom. */
+  readonly actions: readonly SheetAction[];
+  /** Only evaluated when this event's own conditions hold. */
+  readonly children: readonly SheetEvent[];
+  readonly once?: OnceScope;
+}
+
+/** The v2 replacement for VirusDesign: movement is an action inside the sheet, not a separate slot. */
+export interface VirusProgram {
+  readonly events: readonly SheetEvent[];
+}
+
 export type DefenseNodeType =
   | "router"
   | "firewall"
@@ -76,12 +166,25 @@ export interface DefenseGraph {
   readonly coreHp: number;
 }
 
-export interface BattleInput {
-  readonly rulesetVersion: RulesetVersion;
+/**
+ * Discriminated on `rulesetVersion` (ADR 0006 §7): a v1 log carries a block chain, a v2 log
+ * carries an event sheet, and neither can be silently fed to the other engine.
+ */
+export interface BattleInputV1 {
+  readonly rulesetVersion: "v1";
   readonly seed: number;
   readonly virus: VirusDesign;
   readonly defense: DefenseGraph;
 }
+
+export interface BattleInputV2 {
+  readonly rulesetVersion: "v2";
+  readonly seed: number;
+  readonly virus: VirusProgram;
+  readonly defense: DefenseGraph;
+}
+
+export type BattleInput = BattleInputV1 | BattleInputV2;
 
 export type BattleEventType =
   | "virus-entered-node"
@@ -95,7 +198,10 @@ export type BattleEventType =
   | "status-expired"
   | "decoy-absorbed"
   | "battle-timeout"
-  | "battle-won";
+  | "battle-won"
+  /** v2 only (ADR 0006 §6): an event whose actions actually had an effect this tick. `actor` is
+   * the event's id or path, which is what lets a replay light up the rule that fired. */
+  | "rule-fired";
 
 export interface BattleEvent {
   readonly tick: number;
@@ -129,6 +235,12 @@ export interface AccountTierConfig {
   readonly payloadBudgetKb: number;
   readonly defenseBudgetPoints: number;
   readonly coreHp: number;
+  /**
+   * v2 only: hard cap on how many event rows a sheet may contain, counting nested rows
+   * (RULESET v2 §4.0). Bounds the server's per-tick work regardless of how cheap the rows are.
+   * Undefined on the frozen v1 tiers, which have no sheets.
+   */
+  readonly maxSheetEvents?: number;
 }
 
 export interface Ruleset {

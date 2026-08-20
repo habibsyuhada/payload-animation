@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateIfIntegrityBelow } from "../../src/blocks/if-integrity-below.js";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 
 describe("evaluateIfIntegrityBelow", () => {

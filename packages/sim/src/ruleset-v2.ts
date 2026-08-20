@@ -1,0 +1,247 @@
+import { BATTLE_TICK_LIMIT } from "./fixed.js";
+import type { AccountTierConfig, ActionKind, BlockTier, ConditionKind, DefenseNodeType, Ruleset } from "./types.js";
+
+/**
+ * Numeric source of truth for ruleset v2 — the event-sheet virus (docs/ADR/0006, mirrored in
+ * docs/RULESET.md §10-§12). v1's numbers live in ruleset.ts and are frozen: a v2 rebalance must
+ * never reach into that file, because logs referencing "v1" have to keep replaying byte-identical
+ * (PLAN.md DoD #3).
+ *
+ * Two deliberate departures from a straight copy of v1's tables, both flagged as mechanic fixes
+ * in RULESET.md §9 / ADR 0006 §8:
+ *   - Cloak is measured in TICKS, not nodes, and carries a cooldown, so it can neither cover a
+ *     whole 4-node map nor be held open forever by an `[always] -> Cloak` row.
+ *   - Detection stops granting immunity. A sensor is a CONDITION now: it tells the sheet a
+ *     Honeypot is there, and the sheet decides what to do about it. That is the whole point of
+ *     the rewrite ("IF Honeypot -> Backtrack", GDD §4.2).
+ */
+
+const ACCOUNT_TIERS_V2: readonly AccountTierConfig[] = [
+  { tier: 1, payloadBudgetKb: 2400, defenseBudgetPoints: 20, coreHp: 1800, maxSheetEvents: 12 },
+  { tier: 2, payloadBudgetKb: 2700, defenseBudgetPoints: 24, coreHp: 2000, maxSheetEvents: 16 },
+  { tier: 3, payloadBudgetKb: 3000, defenseBudgetPoints: 28, coreHp: 2200, maxSheetEvents: 20 },
+  { tier: 4, payloadBudgetKb: 3300, defenseBudgetPoints: 32, coreHp: 2400, maxSheetEvents: 24 },
+  { tier: 5, payloadBudgetKb: 3600, defenseBudgetPoints: 36, coreHp: 2600, maxSheetEvents: 28 },
+];
+
+export const RULESET_V2: Ruleset = {
+  version: "v2",
+  tickLimit: BATTLE_TICK_LIMIT,
+  accountTiers: ACCOUNT_TIERS_V2,
+};
+
+/** ADR 0006 §2: root + 2 levels. A readability limit (390px portrait, GDD §3), not a technical one. */
+export const MAX_SHEET_DEPTH_V2 = 3;
+
+/**
+ * Backstop for the event-count cap: however the rows are arranged, one tick may not run more
+ * actions than this. Bounds worst-case server work even if a future tier raises maxSheetEvents.
+ */
+export const MAX_ACTIONS_PER_TICK_V2 = 32;
+
+/** Structural weight of one event row (ADR 0006 §5) — ten one-line rules cost more than one rule with ten actions. Nesting itself stays free. */
+export const SHEET_EVENT_ROW_KB_V2 = 40;
+
+/** Integrity every virus starts with, shared with v1 (RULESET.md §2). */
+export const VIRUS_START_INTEGRITY = 1000;
+
+export type ConditionCategory = "sensor" | "state" | "position";
+export type ActionCategory = "movement" | "attack" | "stealth" | "utility";
+
+export interface ConditionSpec {
+  readonly kind: ConditionKind;
+  readonly category: ConditionCategory;
+  /** Tiered conditions carry one weight per tier; untiered ones carry a single weight. */
+  readonly weightKbByTier?: Readonly<Record<BlockTier, number>>;
+  readonly weightKb?: number;
+  /** Sensor conditions only — detection radius in graph hops, per tier. */
+  readonly radiusHopsByTier?: Readonly<Record<BlockTier, number>>;
+  /** "honeypot-near" only — the tier at which a Honeypot disguised as Core (RULESET.md §5.1) is still seen. */
+  readonly seesDisguiseFromTier?: BlockTier;
+  readonly takesNodeTypes?: boolean;
+  readonly takesThreshold?: boolean;
+}
+
+/**
+ * Condition weights are the condition half of the v1 block they came from (RULESET.md §4):
+ * "IF Node = Firewall" I was 120 KB and stays 120 KB, Detect Honeypot / Scan Ahead keep their own
+ * per-tier tables because they are now conditions in their own right. Tiers that only bought
+ * CONFIGURABILITY in v1 (e.g. "IF Integrity < X%" II/III widening the threshold range) collapse to
+ * one flat price: in v2 the threshold is a number the player types, and charging for a number is
+ * charging for nothing.
+ */
+export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
+  { kind: "node-here-is", category: "position", weightKb: 120, takesNodeTypes: true },
+  // Costs more than "node saat ini" because it needs the Scan Ahead half too (120 + 200).
+  { kind: "node-ahead-is", category: "position", weightKb: 320, takesNodeTypes: true },
+  {
+    kind: "honeypot-near",
+    category: "sensor",
+    weightKbByTier: { 1: 350, 2: 450, 3: 550 },
+    radiusHopsByTier: { 1: 1, 2: 2, 3: 3 },
+    seesDisguiseFromTier: 3,
+  },
+  { kind: "trap-near", category: "sensor", weightKbByTier: { 1: 400, 2: 500, 3: 600 }, radiusHopsByTier: { 1: 1, 2: 2, 3: 3 } },
+  { kind: "integrity-below", category: "state", weightKb: 150, takesThreshold: true },
+  { kind: "is-scanned", category: "state", weightKb: 130 },
+  { kind: "took-damage-last-tick", category: "state", weightKb: 90 },
+  { kind: "on-breach-node", category: "position", weightKb: 90 },
+  { kind: "at-node", category: "position", weightKb: 60 },
+];
+
+/**
+ * Which slot an action writes, if any (ADR 0006 §3). Slot actions take the FIRST writer in a
+ * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
+ * at the bottom must not overwrite the reaction above it.
+ */
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy";
+
+export interface ActionSpec {
+  readonly kind: ActionKind;
+  readonly category: ActionCategory;
+  readonly weightKbByTier?: Readonly<Record<BlockTier, number>>;
+  readonly weightKb?: number;
+  /** Undefined = cumulative: every copy that runs this tick applies. */
+  readonly slot?: ActionSlot;
+  /** Movement actions only — the speed the virus crosses the edge it departs on, in DU/tick. */
+  readonly speedDuPerTick?: number;
+}
+
+/** Action weights carry over the v1 block weights verbatim (RULESET.md §3-§4); the two new movement actions are priced below Random Walk because they decide strictly less. */
+export const ACTION_SPECS_V2: readonly ActionSpec[] = [
+  { kind: "move-toward-core", category: "movement", weightKb: 800, slot: "movement", speedDuPerTick: 50 },
+  { kind: "move-avoiding-hazards", category: "movement", weightKb: 600, slot: "movement", speedDuPerTick: 50 },
+  { kind: "move-random", category: "movement", weightKb: 500, slot: "movement", speedDuPerTick: 55 },
+  { kind: "move-back", category: "movement", weightKb: 300, slot: "movement", speedDuPerTick: 50 },
+  { kind: "hold-position", category: "movement", weightKb: 100, slot: "movement" },
+  { kind: "brute-force", category: "attack", weightKbByTier: { 1: 700, 2: 900, 3: 1100 } },
+  { kind: "exploit", category: "attack", weightKbByTier: { 1: 650, 2: 800, 3: 950 } },
+  { kind: "overload", category: "attack", weightKbByTier: { 1: 750, 2: 950, 3: 1150 } },
+  { kind: "cloak", category: "stealth", weightKbByTier: { 1: 500, 2: 650, 3: 800 }, slot: "cloak" },
+  { kind: "slow-crawl", category: "stealth", weightKbByTier: { 1: 300, 2: 380, 3: 460 }, slot: "slow-crawl" },
+  { kind: "self-repair", category: "utility", weightKbByTier: { 1: 450, 2: 550, 3: 650 } },
+  { kind: "arm-decoy", category: "utility", weightKbByTier: { 1: 400, 2: 500, 3: 600 }, slot: "decoy" },
+];
+
+export function getConditionSpec(kind: ConditionKind): ConditionSpec {
+  const spec = CONDITION_SPECS_V2.find((candidate) => candidate.kind === kind);
+  if (!spec) {
+    throw new Error(`no v2 condition spec for kind "${kind}"`);
+  }
+  return spec;
+}
+
+export function getActionSpec(kind: ActionKind): ActionSpec {
+  const spec = ACTION_SPECS_V2.find((candidate) => candidate.kind === kind);
+  if (!spec) {
+    throw new Error(`no v2 action spec for kind "${kind}"`);
+  }
+  return spec;
+}
+
+function weightOf(spec: { readonly weightKb?: number; readonly weightKbByTier?: Readonly<Record<BlockTier, number>> }, tier: BlockTier): number {
+  if (spec.weightKb !== undefined) {
+    return spec.weightKb;
+  }
+  return spec.weightKbByTier![tier];
+}
+
+export function getConditionWeightKb(kind: ConditionKind, tier: BlockTier = 1): number {
+  return weightOf(getConditionSpec(kind), tier);
+}
+
+export function getActionWeightKb(kind: ActionKind, tier: BlockTier = 1): number {
+  return weightOf(getActionSpec(kind), tier);
+}
+
+/** Sensor radius in hops for the two sensor conditions; 0 for anything that isn't one. */
+export function getConditionRadiusHops(kind: ConditionKind, tier: BlockTier = 1): number {
+  return getConditionSpec(kind).radiusHopsByTier?.[tier] ?? 0;
+}
+
+/* --- Effect tables (v2). Damage/heal numbers carry over from v1 unchanged so the two rulesets
+ * stay comparable in balance-lab; only the two mechanics ADR 0006 §8 calls out actually move. --- */
+
+const BRUTE_FORCE_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 40, 2: 60, 3: 85 };
+const EXPLOIT_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 250, 2: 380, 3: 520 };
+const SELF_REPAIR_HEAL_V2: Readonly<Record<BlockTier, number>> = { 1: 5, 2: 8, 3: 12 };
+
+export function getBruteForceDamagePerTickV2(tier: BlockTier): number {
+  return BRUTE_FORCE_DAMAGE_V2[tier];
+}
+
+export function getExploitDamageV2(tier: BlockTier): number {
+  return EXPLOIT_DAMAGE_V2[tier];
+}
+
+export function getSelfRepairHealPerTickV2(tier: BlockTier): number {
+  return SELF_REPAIR_HEAL_V2[tier];
+}
+
+interface OverloadConfigV2 {
+  readonly splashDamage: number;
+  readonly radiusHops: number;
+}
+
+const OVERLOAD_CONFIG_V2: Readonly<Record<BlockTier, OverloadConfigV2>> = {
+  1: { splashDamage: 150, radiusHops: 1 },
+  2: { splashDamage: 230, radiusHops: 1 },
+  3: { splashDamage: 320, radiusHops: 2 },
+};
+
+export function getOverloadConfigV2(tier: BlockTier): OverloadConfigV2 {
+  return OVERLOAD_CONFIG_V2[tier];
+}
+
+interface CloakConfigV2 {
+  /** ADR 0006 §8: ticks, not nodes. ~30 ticks is 1.5s, about three 300 DU edges at 50 DU/tick. */
+  readonly durationTicks: number;
+  /** Measured from the moment the status EXPIRES. Without it, `[always] -> Cloak` is permanent invisibility for 500 KB. */
+  readonly cooldownTicks: number;
+}
+
+const CLOAK_CONFIG_V2: Readonly<Record<BlockTier, CloakConfigV2>> = {
+  1: { durationTicks: 30, cooldownTicks: 90 },
+  2: { durationTicks: 45, cooldownTicks: 90 },
+  3: { durationTicks: 60, cooldownTicks: 90 },
+};
+
+export function getCloakConfigV2(tier: BlockTier): CloakConfigV2 {
+  return CLOAK_CONFIG_V2[tier];
+}
+
+interface SlowCrawlConfigV2 {
+  readonly speedMultiplierPermille: number;
+  readonly iceAccuracyReductionPermille: number;
+}
+
+const SLOW_CRAWL_CONFIG_V2: Readonly<Record<BlockTier, SlowCrawlConfigV2>> = {
+  1: { speedMultiplierPermille: 700, iceAccuracyReductionPermille: 300 },
+  2: { speedMultiplierPermille: 750, iceAccuracyReductionPermille: 400 },
+  3: { speedMultiplierPermille: 800, iceAccuracyReductionPermille: 500 },
+};
+
+export function getSlowCrawlConfigV2(tier: BlockTier): SlowCrawlConfigV2 {
+  return SLOW_CRAWL_CONFIG_V2[tier];
+}
+
+interface DecoyConfigV2 {
+  readonly chargesTotal: number;
+  readonly absorbsPerActivation: number;
+}
+
+const DECOY_CONFIG_V2: Readonly<Record<BlockTier, DecoyConfigV2>> = {
+  1: { chargesTotal: 1, absorbsPerActivation: 1 },
+  2: { chargesTotal: 2, absorbsPerActivation: 1 },
+  3: { chargesTotal: 3, absorbsPerActivation: 2 },
+};
+
+export function getDecoyConfigV2(tier: BlockTier): DecoyConfigV2 {
+  return DECOY_CONFIG_V2[tier];
+}
+
+/** Default threshold for "integrity-below" when a row doesn't carry one (matches v1's tier I). */
+export const DEFAULT_INTEGRITY_THRESHOLD_PERMILLE_V2 = 500;
+
+/** Default target for the two node-type conditions when a row doesn't carry one. */
+export const DEFAULT_CONDITION_TARGET_NODE_TYPES_V2: readonly DefenseNodeType[] = ["firewall"];

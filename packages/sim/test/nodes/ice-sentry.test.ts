@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import { effectiveAccuracyPermille, getIceSentryConfig, rollIceSentryHit } from "../../src/nodes/ice-sentry.js";
 import type { Rng } from "../../src/rng.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";

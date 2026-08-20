@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getCloakDurationNodes } from "../../src/blocks/cloak.js";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 
 describe("getCloakDurationNodes", () => {
