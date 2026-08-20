@@ -382,6 +382,137 @@ select {
   color: var(--color-text-muted);
 }
 
+/* Defend page — a genuinely full-screen editor: it covers the app header and bottom nav (its own
+   "← Keluar" link is the way back), so the camera gets the entire viewport on a phone. */
+.payload-defend {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--color-background);
+  overscroll-behavior: none;
+}
+
+.payload-defend-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* Hands every pan/pinch to the pointer handlers instead of the browser's own scroll & zoom. */
+  touch-action: none;
+  cursor: grab;
+}
+
+.payload-defend-viewport:active {
+  cursor: grabbing;
+}
+
+.payload-defend-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.payload-defend-topbar {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.payload-defend-exit {
+  pointer-events: auto;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  background: var(--color-background-panel-raised);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.payload-defend-zoom {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(18, 20, 28, 0.75);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.payload-defend-hint {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.6rem;
+  background: rgba(26, 30, 42, 0.85);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.payload-defend-actions {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: 0.7rem;
+  background: rgba(26, 30, 42, 0.92);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.payload-defend-action-btn {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0;
+  padding: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+  touch-action: none;
+}
+
+.payload-defend-action-btn--danger {
+  border-color: var(--color-faction-attack);
+  color: var(--color-faction-attack);
+}
+
+.payload-defend-detail-body {
+  margin: 0 0 0.9rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.payload-defend-detail-stats {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0 0 1rem;
+}
+
+.payload-defend-detail-stats dt {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.payload-defend-detail-stats dd {
+  margin: 0.15rem 0 0;
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .payload-modal-backdrop {
   position: fixed;
   inset: 0;
