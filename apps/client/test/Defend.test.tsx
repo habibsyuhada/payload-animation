@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Defend } from "../src/screens/Defend.js";
-import { CORE_ID, ENTRY_ID, useDefendStore } from "../src/state/defendStore.js";
+import { CORE_COST_PT, CORE_ID, DEFENSE_BUDGET_PT, ENTRY_COST_PT, ENTRY_ID, useDefendStore } from "../src/state/defendStore.js";
 // The page is laid out entirely by CSS (fixed full-viewport shell, absolutely positioned action
 // bar) — without the stylesheet its elements collapse to zero size and nothing here is clickable.
 import "../src/theme.css";
@@ -68,6 +68,16 @@ function nodePosition(id: number): { x: number; y: number } {
 
 function viewport(): HTMLElement {
   return page.getByTestId("defend-viewport").element() as HTMLElement;
+}
+
+/** Waits for a node seeded straight into the store to actually reach the DOM — setState renders
+ * asynchronously, so tapping right after it lands on nothing. */
+async function waitForNode(id: number): Promise<void> {
+  await vi.waitFor(() => {
+    if (!nodeGroup(id)) {
+      throw new Error(`node ${id} is not rendered yet`);
+    }
+  });
 }
 
 function tapNode(id: number): void {
@@ -146,13 +156,73 @@ describe("Defend page", () => {
     expect(trials).toHaveLength(5);
     expect(trials.every((trial) => Number(trial.getAttribute("data-wins")) > 0)).toBe(true);
 
-    // The showcase is a real battle rendered by the replay engine, not a still image.
     const caption = await findByTestId("defend-test-showcase-caption");
     expect(caption.textContent).toContain("seed");
-    expect(document.querySelector("[data-testid=defend-test-result] canvas")).not.toBeNull();
 
     await page.getByTestId("defend-test-close").click();
     await expectGone("defend-test-result");
+    await expectGone("defend-playback");
+  });
+
+  it("plays the battle on the map itself — virus, health bar and sentry fire, inside the map's own camera", async () => {
+    // A sentry wired between Entry and Core, so the attacker has to walk past something shooting.
+    useDefendStore.setState({
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -240, y: 0 },
+        { id: 10, type: "ice-sentry", tier: 1, x: 0, y: 0 },
+        { id: CORE_ID, type: "core", x: 240, y: 0 },
+      ],
+    });
+
+    await page.getByTestId("defend-test").click();
+    const playback = await findByTestId("defend-playback");
+    // Rendered inside the SVG's zoom/pan group, not as a separate canvas overlay: the battle is
+    // drawn in world coordinates and inherits the camera the player set.
+    expect(playback.closest("[data-testid=defend-canvas] g")).not.toBeNull();
+    await findByTestId("defend-playback-virus");
+    await findByTestId("defend-playback-hp");
+
+    // Health drains as the sentry lands hits, and a tracer is drawn while a shot is live.
+    const startHp = Number((await findByTestId("defend-playback-hp")).getAttribute("data-integrity"));
+    await vi.waitFor(
+      () => {
+        const hp = Number(page.getByTestId("defend-playback-hp").query()?.getAttribute("data-integrity") ?? startHp);
+        if (hp >= startHp) {
+          throw new Error(`virus has not been damaged yet (${hp}%)`);
+        }
+      },
+      { timeout: 6000 },
+    );
+    await vi.waitFor(
+      () => {
+        if (page.getByTestId("defend-playback-shot").elements().length === 0) {
+          throw new Error("no sentry tracer on screen yet");
+        }
+      },
+      { timeout: 6000 },
+    );
+  });
+
+  it("can pause and scrub the battle, and scrubbing back restores the health it had then", async () => {
+    await page.getByTestId("defend-test").click();
+    await findByTestId("defend-playback-controls");
+
+    await page.getByTestId("defend-playback-toggle").click(); // pause
+    const scrub = (await findByTestId("defend-playback-scrub")) as HTMLInputElement;
+    const late = Number(scrub.max) * 0.9;
+    scrub.value = String(late);
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    const lateHp = await vi.waitFor(() => Number(page.getByTestId("defend-playback-hp").query()?.getAttribute("data-integrity") ?? "100"));
+
+    scrub.value = "0";
+    scrub.dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => {
+      const hp = Number(page.getByTestId("defend-playback-hp").query()?.getAttribute("data-integrity") ?? "0");
+      if (hp !== 100) {
+        throw new Error(`expected full health at t=0, got ${hp}`);
+      }
+    });
+    expect(lateHp).toBeLessThanOrEqual(100);
   });
 
   it("calls out a defense nothing can breach", async () => {
@@ -273,6 +343,122 @@ describe("Defend page", () => {
     viewport().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 40, pointerId: 8 }));
     viewport().dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 40, clientY: 40, pointerId: 8 }));
     await expectGone("defend-node-actions");
+  });
+
+  it("starts with a budget already spent on the Entry and the Core it came with", async () => {
+    const budget = await findByTestId("defend-budget");
+    expect(budget.textContent).toBe(`${ENTRY_COST_PT + CORE_COST_PT}/${DEFENSE_BUDGET_PT} pt`);
+    expect(budget.getAttribute("data-remaining")).toBe(String(DEFENSE_BUDGET_PT - ENTRY_COST_PT - CORE_COST_PT));
+  });
+
+  it("lets the player add another Entry and another Core, charging the budget for both", async () => {
+    await page.getByTestId("defend-add-node").click();
+    await findByTestId("defend-picker");
+    (document.querySelector("[data-testid=defend-picker] [data-node-type=entry]") as HTMLButtonElement).click();
+    await expectGone("defend-picker");
+
+    await page.getByTestId("defend-add-node").click();
+    await findByTestId("defend-picker");
+    (document.querySelector("[data-testid=defend-picker] [data-node-type=core]") as HTMLButtonElement).click();
+    await expectGone("defend-picker");
+
+    await vi.waitFor(() => {
+      const nodes = useDefendStore.getState().nodes;
+      if (nodes.filter((node) => node.type === "entry").length !== 2 || nodes.filter((node) => node.type === "core").length !== 2) {
+        throw new Error("second Entry/Core not placed yet");
+      }
+    });
+    expect((await findByTestId("defend-budget")).textContent).toBe(`${(ENTRY_COST_PT + CORE_COST_PT) * 2}/${DEFENSE_BUDGET_PT} pt`);
+  });
+
+  it("stops offering nodes it can no longer afford", async () => {
+    // Leave 2 pt on the table: enough for a Router (1pt), not for an ICE Sentry (4pt).
+    useDefendStore.setState({
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -240, y: 0 },
+        { id: CORE_ID, type: "core", x: 240, y: 0 },
+        { id: 20, type: "firewall", tier: 3, x: 0, y: 0 }, // 8pt
+        { id: 21, type: "firewall", tier: 3, x: 0, y: 300 }, // 8pt — 20pt spent, 0 left...
+      ],
+    });
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-budget").query()?.getAttribute("data-remaining") !== "0") {
+        throw new Error("budget has not updated yet");
+      }
+    });
+
+    await page.getByTestId("defend-add-node").click();
+    await findByTestId("defend-picker");
+    const cards = page.getByTestId("defend-picker-entry").elements() as HTMLButtonElement[];
+    expect(cards.length).toBeGreaterThan(0);
+    // Nothing costs 0, so with an empty budget every card is refused.
+    expect(cards.every((card) => card.disabled)).toBe(true);
+    expect(cards.every((card) => card.getAttribute("data-affordable") === "false")).toBe(true);
+  });
+
+  it("refuses an unaffordable node even if something asks the store for it directly", async () => {
+    useDefendStore.setState({
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -240, y: 0 },
+        { id: CORE_ID, type: "core", x: 240, y: 0 },
+        { id: 20, type: "firewall", tier: 3, x: 0, y: 0 },
+        { id: 21, type: "firewall", tier: 3, x: 0, y: 300 },
+      ],
+    });
+    const before = useDefendStore.getState().nodes.length;
+    useDefendStore.getState().addNode("ice-sentry", 0, 600, 3);
+    expect(useDefendStore.getState().nodes).toHaveLength(before);
+  });
+
+  it("allows deleting an extra Entry or Core, but never the last one", async () => {
+    useDefendStore.setState({
+      // Kept inside the camera's opening frame: the action bar hides for a node that's off
+      // screen, and this test is about the buttons on it.
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -120, y: 0 },
+        { id: 30, type: "entry", x: -120, y: 180 },
+        { id: CORE_ID, type: "core", x: 120, y: 0 },
+      ],
+    });
+
+    // Two entries: the extra one can go.
+    await waitForNode(30);
+    tapNode(30);
+    await page.getByTestId("defend-action-remove").click();
+    await vi.waitFor(() => {
+      if (useDefendStore.getState().nodes.some((node) => node.id === 30)) {
+        throw new Error("extra entry is still there");
+      }
+    });
+
+    // One entry left: no delete button at all, and the store refuses it too.
+    tapNode(ENTRY_ID);
+    await findByTestId("defend-node-actions");
+    expect(page.getByTestId("defend-action-remove").elements()).toHaveLength(0);
+    useDefendStore.getState().removeNode(ENTRY_ID);
+    expect(useDefendStore.getState().nodes.some((node) => node.id === ENTRY_ID)).toBe(true);
+  });
+
+  it("shows an ICE Sentry's fire range in hops, marking the nodes it actually covers", async () => {
+    useDefendStore.setState({
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -240, y: 0 },
+        { id: 40, type: "ice-sentry", tier: 1, x: 0, y: 0 },
+        { id: CORE_ID, type: "core", x: 240, y: 0 },
+      ],
+    });
+
+    await waitForNode(40);
+    tapNode(40);
+    const range = await findByTestId("defend-fire-range");
+    // Tier 1 reaches 1 hop; wired to both neighbours, that's Entry and Core.
+    expect(range.getAttribute("data-hops")).toBe("1");
+    expect(range.getAttribute("data-covered")).toBe("2");
+    expect(page.getByTestId("defend-fire-target").elements()).toHaveLength(2);
+
+    // A node that doesn't shoot doesn't get one.
+    tapNode(CORE_ID);
+    await expectGone("defend-fire-range");
   });
 
   it("offers no delete button for Entry or Core", async () => {

@@ -1,9 +1,9 @@
-import { getDefenseNodeCost } from "@payload/sim";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { getDefenseNodeCost, getIceSentryConfig, type BattleLog } from "@payload/sim";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
-import { ReplayPlayer } from "../components/ReplayPlayer.js";
-import { replayLayoutFor, runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
+import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
+import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -16,7 +16,7 @@ import {
   PLACEABLE_NODE_CATALOG,
   type NodeShape,
 } from "../data/defenseNodeCatalog.js";
-import { isRemovable, linksFor, LINK_RANGE_DU, useDefendStore, type DefendNode, type PlaceableNodeType, type WorldBounds } from "../state/defendStore.js";
+import { DEFENSE_BUDGET_PT, isRemovable, linksFor, LINK_RANGE_DU, nodeCostPt, remainingPt, spentPt, useDefendStore, type DefendNode, type NodeLink, type PlaceableNodeType, type WorldBounds } from "../state/defendStore.js";
 import { theme } from "../theme.js";
 
 /** Raw CSS-pixel movement below which a press-and-release still counts as a tap, not a drag. */
@@ -33,12 +33,18 @@ const NODE_LABEL_BAND_DU = 10 + 13;
 /** World-space size of one background grid cell — drawn via an SVG pattern so it pans and zooms
  * with the camera, giving the eye something to track while dragging an otherwise empty canvas. */
 const GRID_CELL_DU = 40;
+/** Roughly how much of the bottom of the screen the results sheet takes up — the camera fit that
+ * runs when a battle starts aims at the strip above it. */
+const RESULT_SHEET_BAND_PX = 220;
 /** How far in from the viewport edge an off-screen node's direction marker sits. */
 const OFFSCREEN_INSET_PX = 34;
 /** Connector colours: a wide, soft halo in the app's accent blue with a near-white core, which is
  * what reads as "glowing" against this page's near-black background. */
 const LINK_COLOR = theme.faction.movement;
 const LINK_CORE_COLOR = "#cfe4ff";
+/** ICE Sentry's own colour (defenseNodeCatalog) — the fire-range ring belongs to the sentry, so it
+ * is drawn in the sentry's colour rather than the link blue. */
+const FIRE_RANGE_COLOR = "#5ac8e6";
 
 function zoomFactorFromWheelDelta(deltaY: number): number {
   return Math.exp(-deltaY * 0.001);
@@ -89,18 +95,72 @@ function worldBoundsOf(nodes: readonly DefendNode[]): WorldBounds {
   };
 }
 
+/** What the node picker offers: the ruleset's placeable catalog plus Entry and Core, which this
+ * page lets the player add too (a second way in, a second thing to defend) — priced by the page,
+ * see ENTRY_COST_PT. Entry/Core go first: they're structural, so they read as a different class
+ * of thing than the defensive hardware below them. */
+const PICKER_CATALOG: readonly { type: PlaceableNodeType; label: string; color: string; shape: NodeShape; tiered: boolean }[] = [
+  { type: "entry", label: "Entry", color: ENTRY_COLOR, shape: ENTRY_SHAPE, tiered: false },
+  { type: "core", label: "Core", color: CORE_COLOR, shape: CORE_SHAPE, tiered: false },
+  ...PLACEABLE_NODE_CATALOG.map((entry) => ({ type: entry.type as PlaceableNodeType, label: entry.label, color: entry.color, shape: entry.shape, tiered: entry.tiered })),
+];
+
 const VERDICT_COPY: Record<DefenseVerdict, string> = {
   impenetrable: "❌ Tidak ada satu pun penyerang yang tembus. Pertahanan seperti ini tidak adil dan akan ditolak saat publish.",
   breachable: "✅ Bisa ditembus, tapi tidak gratis — sebagian penyerang lolos, sebagian gagal. Ini yang kita mau.",
   "too-easy": "⚠️ Semua penyerang masuk hampir selalu. Sah, tapi kamu akan kalah terus.",
 };
 
-/** Replay canvas size: fills the dialog's own content width (the modal caps at 26rem/416px, less
- * its 1.25rem padding), floored so a very narrow phone still gets a usable picture. */
-function replayCanvasSizeFor(viewportWidth: number): { width: number; height: number } {
-  const available = Math.max(0, viewportWidth - 48 - 40);
-  const width = Math.round(Math.max(260, Math.min(376, available || 376)));
-  return { width, height: Math.round(width * 0.72) };
+export interface FireCoverage {
+  /** Every node the sentry can shoot a virus on. */
+  readonly nodeIds: ReadonlySet<number>;
+  readonly radiusHops: number;
+  /** How far that reach extends on the map, in world units — the distance to the furthest node it
+   * covers, so the ring drawn at this radius is a true picture of the graph the player built. */
+  readonly radiusDu: number;
+}
+
+/**
+ * What an ICE Sentry can actually shoot. The ruleset measures its reach in HOPS along the graph
+ * (RULESET.md §5.1: radius 1-2 hops per tier), not in map distance — so the honest picture is
+ * "which nodes are within N links", walked here with a breadth-first search over the same derived
+ * links the map draws. The ring Defend renders from this is sized to the furthest node actually
+ * covered rather than to some invented distance, and the covered nodes are marked individually,
+ * because two nodes the same distance away can differ in whether the sentry reaches them at all.
+ */
+function fireCoverageFor(sentry: DefendNode, links: readonly NodeLink[]): FireCoverage | null {
+  if (sentry.type !== "ice-sentry") {
+    return null;
+  }
+  const radiusHops = getIceSentryConfig(sentry.tier ?? 1).radiusHops;
+  const neighbours = new Map<number, { id: number; x: number; y: number }[]>();
+  for (const link of links) {
+    if (!neighbours.has(link.from.id)) neighbours.set(link.from.id, []);
+    if (!neighbours.has(link.to.id)) neighbours.set(link.to.id, []);
+    neighbours.get(link.from.id)!.push(link.to);
+    neighbours.get(link.to.id)!.push(link.from);
+  }
+
+  const covered = new Set<number>();
+  let radiusDu = 0;
+  let frontier: { id: number; x: number; y: number }[] = [sentry];
+  const seen = new Set<number>([sentry.id]);
+  for (let hop = 0; hop < radiusHops; hop += 1) {
+    const next: { id: number; x: number; y: number }[] = [];
+    for (const node of frontier) {
+      for (const neighbour of neighbours.get(node.id) ?? []) {
+        if (seen.has(neighbour.id)) {
+          continue;
+        }
+        seen.add(neighbour.id);
+        covered.add(neighbour.id);
+        radiusDu = Math.max(radiusDu, Math.hypot(neighbour.x - sentry.x, neighbour.y - sentry.y));
+        next.push(neighbour);
+      }
+    }
+    frontier = next;
+  }
+  return { nodeIds: covered, radiusHops, radiusDu: Math.round(radiusDu) };
 }
 
 export interface OffscreenMarker {
@@ -213,6 +273,11 @@ export function Defend(): JSX.Element {
   const [isPickerOpen, setPickerOpen] = useState(false);
   const [isTesting, setTesting] = useState(false);
   const [testReport, setTestReport] = useState<DefenseTestReport | null>(null);
+  const [playbackLog, setPlaybackLog] = useState<BattleLog | null>(null);
+  const [playbackSeconds, setPlaybackSeconds] = useState(0);
+  const [isPlaying, setPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const playbackStartRef = useRef<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [actionBarSize, setActionBarSize] = useState({ width: 0, height: 0 });
 
@@ -224,9 +289,39 @@ export function Defend(): JSX.Element {
    * canvas pointing at nothing. The selection itself survives, so panning back brings them back. */
   const selectionIsOffscreen = offscreenMarkers.some((marker) => marker.node.id === selectedNodeId);
   const actionBarPosition = selectedNode ? actionBarPositionFor(selectedNode, { zoom, offsetX, offsetY }, viewportSize, actionBarSize) : null;
-  /** The replay canvas is a fixed pixel bitmap, so it gets sized once from the viewport rather
-   * than stretched by CSS — stretching a canvas resamples it and the node glyphs go soft. */
-  const replaySize = replayCanvasSizeFor(viewportSize.width);
+  const budgetRemaining = remainingPt(nodes);
+  const fireCoverage = selectedNode ? fireCoverageFor(selectedNode, links) : null;
+  /** The battle runs against the layout as it was when the test ran, so the timeline is compiled
+   * from the log's own node ids against current world positions — dragging a node mid-playback
+   * moves the attack with it, which is exactly the "what if I moved this?" the page is for. */
+  const playbackTimeline = useMemo(() => (playbackLog ? compileForMap(playbackLog, nodes) : null), [playbackLog, nodes]);
+  const playbackFrame = playbackTimeline ? frameAt(playbackTimeline, playbackSeconds) : null;
+  const playbackDuration = playbackTimeline ? playbackDurationSeconds(playbackTimeline) : 0;
+
+  /** Drives the battle clock off requestAnimationFrame rather than a fixed interval, so playback
+   * runs at the display's own refresh rate and a dropped frame costs smoothness, not sync: the
+   * time shown is always measured from the wall clock, never accumulated tick by tick. */
+  useEffect(() => {
+    if (!isPlaying || playbackDuration <= 0) {
+      return;
+    }
+    let frameId = 0;
+    const step = (timestampMs: number): void => {
+      if (playbackStartRef.current === null) {
+        playbackStartRef.current = timestampMs;
+      }
+      const elapsed = ((timestampMs - playbackStartRef.current) / 1000) * playbackSpeed;
+      if (elapsed >= playbackDuration) {
+        setPlaybackSeconds(playbackDuration);
+        setPlaying(false);
+        return;
+      }
+      setPlaybackSeconds(elapsed);
+      frameId = requestAnimationFrame(step);
+    };
+    frameId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frameId);
+  }, [isPlaying, playbackDuration, playbackSpeed]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -404,10 +499,34 @@ export function Defend(): JSX.Element {
   function handleTestDefense(): void {
     setTesting(true);
     setTestReport(null);
+    clearSelection();
     requestAnimationFrame(() => {
-      setTestReport(runDefenseTest(useDefendStore.getState().nodes));
+      const report = runDefenseTest(useDefendStore.getState().nodes);
+      setTestReport(report);
       setTesting(false);
+      // Straight into the battle on the map — the numbers alone don't show how they got in.
+      startPlayback(report);
     });
+  }
+
+  function startPlayback(report: DefenseTestReport): void {
+    playbackStartRef.current = null;
+    setPlaybackSeconds(0);
+    setPlaying(true);
+    setPlaybackLog(report.showcase.showcase);
+    // Frame the whole graph before the battle starts — an attack happening off-screen is the one
+    // way this feature can silently fail. The results sheet owns the bottom of the screen, so the
+    // fit targets the strip above it rather than the full viewport.
+    if (viewportSize.width > 0 && viewportSize.height > 0) {
+      useDefendStore.getState().fitToBounds(worldBoundsOf(useDefendStore.getState().nodes), viewportSize.width, Math.max(120, viewportSize.height - RESULT_SHEET_BAND_PX));
+    }
+  }
+
+  function stopPlayback(): void {
+    setPlaying(false);
+    setPlaybackLog(null);
+    setPlaybackSeconds(0);
+    playbackStartRef.current = null;
   }
 
   /** Drops the picked type in the middle of whatever the camera is currently looking at — the
@@ -466,6 +585,24 @@ export function Defend(): JSX.Element {
                 style={{ pointerEvents: "none" }}
               />
             )}
+            {/* An ICE Sentry's reach, drawn only when it's the selected node. Sized to the
+            furthest node it actually covers (its reach is counted in hops, see fireCoverageFor),
+            with each covered node ringed so the two ideas can't be confused. */}
+            {selectedNode && fireCoverage && (
+              <g data-testid="defend-fire-range" data-node-id={selectedNode.id} data-hops={fireCoverage.radiusHops} data-covered={fireCoverage.nodeIds.size} style={{ pointerEvents: "none" }}>
+                <circle cx={selectedNode.x} cy={selectedNode.y} r={Math.max(fireCoverage.radiusDu, nodeRadius(selectedNode) + 24)} fill={FIRE_RANGE_COLOR} fillOpacity={0.06} stroke={FIRE_RANGE_COLOR} strokeWidth={2} strokeDasharray="3 7" opacity={0.85} />
+                {nodes
+                  .filter((node) => fireCoverage.nodeIds.has(node.id))
+                  .map((node) => (
+                    <circle key={`covered-${node.id}`} data-testid="defend-fire-target" data-node-id={node.id} cx={node.x} cy={node.y} r={nodeRadius(node) + 8} fill="none" stroke={FIRE_RANGE_COLOR} strokeWidth={2} opacity={0.75} />
+                  ))}
+                {/* Pinned just above the sentry rather than to the ring's edge: the ring can be
+                wider than the screen, and a caption nobody can see explains nothing. */}
+                <text x={selectedNode.x} y={selectedNode.y - nodeRadius(selectedNode) - 27} textAnchor="middle" fontSize={12} fill={FIRE_RANGE_COLOR} opacity={0.95}>
+                  jangkauan tembak · {fireCoverage.radiusHops} hop
+                </text>
+              </g>
+            )}
             {links.map((link) => (
               <g key={`link-${link.from.id}-${link.to.id}`} data-testid="defend-link" data-from={link.from.id} data-to={link.to.id} data-distance={link.distanceDu} style={{ pointerEvents: "none" }}>
                 {/* Three stacked strokes rather than an SVG blur filter: same bloom, a fraction of
@@ -493,6 +630,66 @@ export function Defend(): JSX.Element {
                 </text>
               </g>
             ))}
+
+            {/* The attack itself, drawn inside the same camera transform as the map — the battle
+            happens on the layout the player built, at whatever zoom they're looking at it. */}
+            {playbackFrame && (
+              <g data-testid="defend-playback" data-integrity={Math.round(playbackFrame.integrity * 100)} style={{ pointerEvents: "none" }}>
+                {playbackFrame.flashes.map((flash, index) => {
+                  const node = nodes.find((candidate) => candidate.id === flash.nodeId);
+                  if (!node) return null;
+                  return <circle key={`flash-${index}`} cx={node.x} cy={node.y} r={nodeRadius(node) + 6 + flash.progress * 26} fill="none" stroke={flash.kind === "destroyed" ? theme.faction.attack : nodeColor(node)} strokeWidth={3} opacity={1 - flash.progress} />;
+                })}
+
+                {/* ICE Sentry fire: a tracer snapping from the sentry to wherever the virus is,
+                plus a muzzle flare, so a hit is something you see rather than infer. */}
+                {playbackFrame.shots.map((shot, index) => (
+                  <g key={`shot-${index}`} data-testid="defend-playback-shot">
+                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke={FIRE_RANGE_COLOR} strokeWidth={6} strokeLinecap="round" opacity={(1 - shot.progress) * 0.35} />
+                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke="#eaf6ff" strokeWidth={2} strokeLinecap="round" opacity={1 - shot.progress} />
+                    <circle cx={shot.from.x} cy={shot.from.y} r={10 + shot.progress * 10} fill="none" stroke={FIRE_RANGE_COLOR} strokeWidth={3} opacity={1 - shot.progress} />
+                  </g>
+                ))}
+
+                {playbackFrame.virusAlive ? (
+                  <g data-testid="defend-playback-virus">
+                    {/* Impact flash: the virus itself flares red the moment it's hit. */}
+                    {playbackFrame.recentHits.map((hit, index) => (
+                      <circle key={`hit-${index}`} cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16 + hit.progress * 18} fill="none" stroke={theme.faction.attack} strokeWidth={3} opacity={1 - hit.progress} />
+                    ))}
+                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16} fill={theme.faction.attack} opacity={0.18} />
+                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={9} fill="#eaf6ff" />
+
+                    {/* Health bar rides BELOW the virus, in world units so it scales with the map —
+                    above is where each node prints its own name, and the two collided there. */}
+                    <rect x={playbackFrame.virusPosition.x - 26} y={playbackFrame.virusPosition.y + 16} width={52} height={9} rx={4.5} fill="#000" opacity={0.6} />
+                    <rect
+                      data-testid="defend-playback-hp"
+                      data-integrity={Math.round(playbackFrame.integrity * 100)}
+                      x={playbackFrame.virusPosition.x - 24.5}
+                      y={playbackFrame.virusPosition.y + 17.5}
+                      width={49 * playbackFrame.integrity}
+                      height={6}
+                      rx={3}
+                      fill={playbackFrame.integrity > 0.5 ? theme.faction.stealth : playbackFrame.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
+                    />
+
+                    {/* Floating damage numbers, drifting up as they fade. */}
+                    {playbackFrame.recentHits
+                      .filter((hit) => hit.damage > 0)
+                      .map((hit, index) => (
+                        <text key={`dmg-${index}`} data-testid="defend-playback-damage" x={playbackFrame.virusPosition.x + 22} y={playbackFrame.virusPosition.y - 8 - hit.progress * 22} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
+                          -{hit.damage}
+                        </text>
+                      ))}
+                  </g>
+                ) : (
+                  <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y} textAnchor="middle" fontSize={20} fill={theme.faction.attack}>
+                    ✖
+                  </text>
+                )}
+              </g>
+            )}
           </g>
         </svg>
 
@@ -511,7 +708,7 @@ export function Defend(): JSX.Element {
             >
               ✥
             </button>
-            {isRemovable(selectedNode) && (
+            {isRemovable(selectedNode, nodes) && (
               <button
                 type="button"
                 data-testid="defend-action-remove"
@@ -571,15 +768,25 @@ export function Defend(): JSX.Element {
           <button type="button" className="payload-defend-test-btn" data-testid="defend-test" onPointerDown={(event) => event.stopPropagation()} onClick={handleTestDefense} disabled={isTesting}>
             {isTesting ? "Menguji…" : "🧪 Uji pertahanan"}
           </button>
-          <span className="payload-defend-zoom" data-testid="defend-zoom-level">
-            {Math.round(zoom * 100)}%
+          <span className="payload-defend-meter">
+            <strong data-testid="defend-budget" data-remaining={budgetRemaining} className={budgetRemaining === 0 ? "payload-defend-budget--empty" : undefined}>
+              {spentPt(nodes)}/{DEFENSE_BUDGET_PT} pt
+            </strong>
+            <span className="payload-defend-zoom" data-testid="defend-zoom-level">
+              {Math.round(zoom * 100)}%
+            </span>
           </span>
         </div>
 
-        <p className="payload-defend-hint" data-testid="defend-hint">
-          {isDraggingNode ? "Node yang masuk lingkaran langsung tersambung." : "Geser & cubit untuk kamera · tap node untuk aksinya · node dalam lingkaran otomatis tersambung."}
-        </p>
+        {/* The results sheet owns the bottom of the screen while it's open, and the editing
+        affordances have nothing to say during a battle — both step aside for it. */}
+        {!testReport && (
+          <p className="payload-defend-hint" data-testid="defend-hint">
+            {isDraggingNode ? "Node yang masuk lingkaran langsung tersambung." : "Geser & cubit untuk kamera · tap node untuk aksinya · node dalam lingkaran otomatis tersambung."}
+          </p>
+        )}
 
+        {!testReport && (
         <button
           type="button"
           className="payload-defend-add-btn"
@@ -591,27 +798,80 @@ export function Defend(): JSX.Element {
         >
           ＋
         </button>
+        )}
       </div>
 
+      {/* Results live in a sheet along the bottom rather than a modal over the map: the battle
+      plays on the map itself, so covering the map would hide the very thing being reported. */}
       {testReport && (
-        <div className="payload-modal-backdrop" data-testid="defend-test-backdrop" onClick={() => setTestReport(null)}>
-          <div className="payload-modal payload-modal--wide" role="dialog" aria-label="Hasil uji pertahanan" data-testid="defend-test-result" onClick={(event) => event.stopPropagation()}>
-            <h2>Uji Pertahanan</h2>
-
+        <div className="payload-defend-sheet" data-testid="defend-test-result" role="region" aria-label="Hasil uji pertahanan">
+          <div className="payload-defend-sheet-head">
             <p className={`payload-defend-verdict payload-defend-verdict--${testReport.verdict}`} data-testid="defend-test-verdict" data-verdict={testReport.verdict}>
               {VERDICT_COPY[testReport.verdict]}
             </p>
+            <button
+              type="button"
+              data-testid="defend-test-close"
+              className="payload-defend-sheet-close"
+              aria-label="Tutup hasil uji"
+              onClick={() => {
+                stopPlayback();
+                setTestReport(null);
+              }}
+            >
+              ✕
+            </button>
+          </div>
 
-            {/* The proof, not just the number: an actual battle from the run above, replayable
-            forever from its (ruleset, seed, virus) because the sim is deterministic. */}
-            <div className="payload-defend-showcase">
-              <p className="payload-defend-showcase-caption" data-testid="defend-test-showcase-caption">
-                {testReport.showcase.showcaseWon ? "Begini cara mereka masuk" : "Serangan yang paling nyaris"} — <strong>{testReport.showcase.virus.name}</strong>, seed {testReport.showcase.showcase.input.seed}, sisa Core{" "}
-                {Math.round(testReport.showcase.showcase.result.score.coreRatioPermille / 10)}%
-              </p>
-              <ReplayPlayer log={testReport.showcase.showcase} layout={replayLayoutFor(nodes, replaySize.width, replaySize.height)} width={replaySize.width} height={replaySize.height} />
+          {playbackTimeline && (
+            <div className="payload-defend-playback-bar" data-testid="defend-playback-controls">
+              <button
+                type="button"
+                data-testid="defend-playback-toggle"
+                className="payload-defend-playback-btn"
+                onClick={() => {
+                  // Restarting from the end rewinds first, so the button never looks inert.
+                  if (!isPlaying && playbackSeconds >= playbackDuration) {
+                    setPlaybackSeconds(0);
+                  }
+                  playbackStartRef.current = null;
+                  setPlaying((playing) => !playing);
+                }}
+              >
+                {isPlaying ? "⏸" : playbackSeconds >= playbackDuration ? "↻" : "▶"}
+              </button>
+              <input
+                type="range"
+                data-testid="defend-playback-scrub"
+                className="payload-defend-playback-scrub"
+                min={0}
+                max={Math.max(0.01, playbackDuration)}
+                step={0.01}
+                value={Math.min(playbackSeconds, playbackDuration)}
+                aria-label="Waktu pertempuran"
+                onChange={(event) => {
+                  setPlaying(false);
+                  playbackStartRef.current = null;
+                  setPlaybackSeconds(Number(event.target.value));
+                }}
+              />
+              <select data-testid="defend-playback-speed" className="payload-defend-playback-speed" value={playbackSpeed} aria-label="Kecepatan" onChange={(event) => { playbackStartRef.current = null; setPlaybackSpeed(Number(event.target.value)); }}>
+                {[0.5, 1, 2, 4].map((speed) => (
+                  <option key={speed} value={speed}>
+                    {speed}×
+                  </option>
+                ))}
+              </select>
             </div>
+          )}
 
+          <p className="payload-defend-showcase-caption" data-testid="defend-test-showcase-caption">
+            {testReport.showcase.showcaseWon ? "Begini cara mereka masuk" : "Serangan yang paling nyaris"} — <strong>{testReport.showcase.virus.name}</strong>, seed {testReport.showcase.showcase.input.seed}, sisa Core{" "}
+            {Math.round(testReport.showcase.showcase.result.score.coreRatioPermille / 10)}%
+          </p>
+
+          <details className="payload-defend-sheet-details">
+            <summary>Rincian {testReport.trials.length} penyerang</summary>
             <ul className="payload-defend-trials" data-testid="defend-test-trials">
               {testReport.trials.map((trial) => (
                 <li key={trial.virus.id} data-testid="defend-test-trial" data-virus={trial.virus.id} data-wins={trial.wins}>
@@ -620,6 +880,9 @@ export function Defend(): JSX.Element {
                     <span className={trial.wins > 0 ? "payload-defend-trial-win" : "payload-defend-trial-loss"}>
                       {trial.wins > 0 ? `tembus ${trial.wins}/${trial.runs}` : `gagal ${trial.runs}×`}
                     </span>
+                    <button type="button" data-testid="defend-trial-watch" className="payload-defend-trial-watch" onClick={() => { playbackStartRef.current = null; setPlaybackSeconds(0); setPlaying(true); setPlaybackLog(trial.showcase); }}>
+                      Tonton
+                    </button>
                   </div>
                   <div className="payload-defend-trial-track">
                     <span className="payload-defend-trial-fill" style={{ width: `${Math.round(trial.winrate * 100)}%`, background: trial.wins > 0 ? theme.faction.stealth : theme.faction.attack }} />
@@ -630,21 +893,17 @@ export function Defend(): JSX.Element {
             </ul>
 
             {!testReport.validation.valid && (
-              <details className="payload-defend-structural" data-testid="defend-test-structural">
-                <summary>Catatan struktur ({testReport.validation.errors.length})</summary>
+              <div className="payload-defend-structural" data-testid="defend-test-structural">
+                <strong>Catatan struktur ({testReport.validation.errors.length})</strong>
                 <ul>
                   {testReport.validation.errors.map((error, index) => (
                     <li key={index}>{error.message}</li>
                   ))}
                 </ul>
                 <small>Aturan topologi @payload/sim — halaman ini sandbox, jadi ini catatan, bukan penghalang uji.</small>
-              </details>
+              </div>
             )}
-
-            <button type="button" data-testid="defend-test-close" onClick={() => setTestReport(null)}>
-              Tutup
-            </button>
-          </div>
+          </details>
         </div>
       )}
 
@@ -652,16 +911,34 @@ export function Defend(): JSX.Element {
         <div className="payload-modal-backdrop" data-testid="defend-picker-backdrop" onClick={() => setPickerOpen(false)}>
           <div className="payload-modal" role="dialog" aria-label="Pilih node" data-testid="defend-picker" onClick={(event) => event.stopPropagation()}>
             <h2>Pilih Node</h2>
+            <p className="payload-defend-budget-note" data-testid="defend-picker-budget">
+              Sisa <strong>{budgetRemaining} pt</strong> dari {DEFENSE_BUDGET_PT} pt
+            </p>
             <div className="payload-modal-grid">
-              {PLACEABLE_NODE_CATALOG.map((entry) => (
-                <button key={entry.type} type="button" data-testid="defend-picker-entry" data-node-type={entry.type} className="payload-modal-card" style={{ borderColor: entry.color }} onClick={() => handlePickNodeType(entry.type, entry.tiered)}>
-                  <svg className="payload-modal-card-glyph" viewBox="0 0 40 40" aria-hidden="true">
-                    <NodeGlyph shape={entry.shape} cx={20} cy={20} r={14} fill={entry.color} stroke="none" strokeWidth={0} />
-                  </svg>
-                  <span>{entry.label}</span>
-                  <small>{getDefenseNodeCost(entry.type, entry.tiered ? 1 : undefined)}pt</small>
-                </button>
-              ))}
+              {PICKER_CATALOG.map((entry) => {
+                const cost = nodeCostPt({ type: entry.type, ...(entry.tiered ? { tier: 1 as const } : {}) });
+                const affordable = cost <= budgetRemaining;
+                return (
+                  <button
+                    key={entry.type}
+                    type="button"
+                    data-testid="defend-picker-entry"
+                    data-node-type={entry.type}
+                    data-affordable={affordable}
+                    className="payload-modal-card"
+                    style={{ borderColor: entry.color }}
+                    disabled={!affordable}
+                    title={affordable ? undefined : `Butuh ${cost} pt, sisa ${budgetRemaining} pt`}
+                    onClick={() => handlePickNodeType(entry.type, entry.tiered)}
+                  >
+                    <svg className="payload-modal-card-glyph" viewBox="0 0 40 40" aria-hidden="true">
+                      <NodeGlyph shape={entry.shape} cx={20} cy={20} r={14} fill={entry.color} stroke="none" strokeWidth={0} />
+                    </svg>
+                    <span>{entry.label}</span>
+                    <small>{cost}pt</small>
+                  </button>
+                );
+              })}
             </div>
             <button type="button" data-testid="defend-picker-close" onClick={() => setPickerOpen(false)}>
               Batal

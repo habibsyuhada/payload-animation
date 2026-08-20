@@ -461,6 +461,109 @@ select {
   max-width: 30rem;
 }
 
+/* Results sheet: pinned along the bottom, deliberately not a modal — the battle it reports on is
+   playing on the map above it, so it must never cover the map. */
+.payload-defend-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  padding: 0.7rem 0.8rem calc(0.7rem + env(safe-area-inset-bottom));
+  background: rgba(18, 20, 28, 0.95);
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.payload-defend-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.payload-defend-sheet-head .payload-defend-verdict {
+  flex: 1;
+  margin: 0;
+}
+
+.payload-defend-sheet-close {
+  margin: 0;
+  padding: 0.3rem 0.55rem;
+  flex-shrink: 0;
+}
+
+.payload-defend-playback-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.payload-defend-playback-btn {
+  margin: 0;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.payload-defend-playback-scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-faction-movement);
+}
+
+.payload-defend-playback-speed {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.35rem;
+}
+
+.payload-defend-sheet-details {
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-sheet-details summary {
+  cursor: pointer;
+}
+
+.payload-defend-trial-watch {
+  margin: 0;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.68rem;
+}
+
+.payload-defend-budget-note {
+  margin: -0.4rem 0 0.8rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-budget-note strong {
+  color: var(--color-text);
+}
+
+.payload-defend-meter {
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  font-size: 0.75rem;
+}
+
+.payload-defend-meter strong {
+  color: var(--color-text);
+  font-size: 0.78rem;
+}
+
+.payload-defend-budget--empty {
+  color: var(--color-faction-attack);
+}
+
 .payload-defend-verdict {
   margin: 0 0 0.9rem;
   padding: 0.6rem 0.7rem;

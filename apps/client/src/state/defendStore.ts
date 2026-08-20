@@ -1,4 +1,4 @@
-import { EDGE_LENGTH_MIN_DU, type BlockTier, type DefenseNodeType } from "@payload/sim";
+import { EDGE_LENGTH_MIN_DU, getAccountTierConfig, getDefenseNodeCost, RULESET_V1, type BlockTier, type DefenseNodeType } from "@payload/sim";
 import { create } from "zustand";
 
 /**
@@ -37,8 +37,30 @@ const INITIAL_NODES: readonly DefendNode[] = [
   { id: CORE_ID, type: "core", x: 120, y: 0 },
 ];
 
-/** Every node type the player can actually place — Entry and Core come with the graph. */
-export type PlaceableNodeType = Exclude<DefenseNodeType, "entry" | "core">;
+/** Every node type the player can place — on this page that includes extra Entries and Cores. */
+export type PlaceableNodeType = DefenseNodeType;
+
+/**
+ * What an Entry or a Core costs out of the defense budget.
+ *
+ * @payload/sim prices both at 0 ("structural, never purchased" — RULESET.md §5.1), which works
+ * when the graph always has exactly 2 Entries and 1 Core handed to the player. This page lets
+ * them add more, so free Entries/Cores would be an unpriced decision. These two numbers are
+ * therefore page-level game design, not ruleset values: an extra Entry is cheap because it opens
+ * another way in (it mostly helps the attacker), while an extra Core is expensive because it is
+ * another thing that has to be defended. The sim still prices them at 0 when the test window
+ * validates the graph — it is the page's own budget that these feed.
+ */
+export const ENTRY_COST_PT = 1;
+export const CORE_COST_PT = 3;
+
+/** The whole build allowance, straight from the ruleset's account-tier table (no account system
+ * yet — Fase 4/5 — so tier 1, the same placeholder the other screens use). */
+export const DEFENSE_BUDGET_PT = getAccountTierConfig(RULESET_V1, 1).defenseBudgetPoints;
+
+/** A graph always needs a way in and something to defend, so the last of either can't be deleted. */
+export const MIN_ENTRY_COUNT = 1;
+export const MIN_CORE_COUNT = 1;
 
 /**
  * How far a node reaches to link up with another, in world units — the radius of the range ring
@@ -76,10 +98,32 @@ export function linksFor(nodes: readonly DefendNode[]): readonly NodeLink[] {
   return links;
 }
 
-/** Entry and Core are system-owned (GDD §5): the player may reposition them but never delete
- * them — a graph without either has no attack path at all. */
-export function isRemovable(node: DefendNode): boolean {
-  return node.type !== "entry" && node.type !== "core";
+/** What this node costs out of the defense budget. Entry/Core use the page's own prices (see
+ * ENTRY_COST_PT); everything else is priced by the ruleset itself. */
+export function nodeCostPt(node: Pick<DefendNode, "type" | "tier">): number {
+  if (node.type === "entry") return ENTRY_COST_PT;
+  if (node.type === "core") return CORE_COST_PT;
+  return getDefenseNodeCost(node.type, node.tier);
+}
+
+export function spentPt(nodes: readonly DefendNode[]): number {
+  return nodes.reduce((total, node) => total + nodeCostPt(node), 0);
+}
+
+export function remainingPt(nodes: readonly DefendNode[]): number {
+  return DEFENSE_BUDGET_PT - spentPt(nodes);
+}
+
+/** Deletable unless it's the last way in or the last thing to defend — a graph without either
+ * isn't a defense at all. Everything else the player placed, they can take back. */
+export function isRemovable(node: DefendNode, nodes: readonly DefendNode[]): boolean {
+  if (node.type === "entry") {
+    return nodes.filter((candidate) => candidate.type === "entry").length > MIN_ENTRY_COUNT;
+  }
+  if (node.type === "core") {
+    return nodes.filter((candidate) => candidate.type === "core").length > MIN_CORE_COUNT;
+  }
+  return true;
 }
 
 export interface WorldBounds {
@@ -162,10 +206,16 @@ export const useDefendStore = create<DefendState>((set) => ({
   openDetail: (id) => set({ detailNodeId: id }),
   closeDetail: () => set({ detailNodeId: null }),
 
+  /** Refuses outright when the budget can't cover it, rather than letting the player overspend and
+   * then telling them off — the picker already disables what they can't afford, so reaching here
+   * broke means something else got out of step. */
   addNode: (type, x, y, tier) => {
-    const id = nextNodeId;
-    nextNodeId += 1;
     set((state) => {
+      if (nodeCostPt({ type, ...(tier !== undefined ? { tier } : {}) }) > remainingPt(state.nodes)) {
+        return state;
+      }
+      const id = nextNodeId;
+      nextNodeId += 1;
       const spot = freeSpotNear(state.nodes, x, y);
       return { nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x: spot.x, y: spot.y }], selectedNodeId: id };
     });
@@ -176,7 +226,7 @@ export const useDefendStore = create<DefendState>((set) => ({
   removeNode: (id) =>
     set((state) => {
       const node = state.nodes.find((candidate) => candidate.id === id);
-      if (!node || !isRemovable(node)) {
+      if (!node || !isRemovable(node, state.nodes)) {
         return state;
       }
       return {
