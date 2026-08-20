@@ -23,11 +23,32 @@ const DRAG_THRESHOLD_PX = 6;
 const ACTION_BAR_GAP_PX = 12;
 /** How close to the viewport edge the action bar is allowed to get. */
 const EDGE_MARGIN_PX = 8;
+/** Height of the strip along the bottom held by the hint text and the add-node button. */
+const BOTTOM_UI_BAND_PX = 84;
+/** World-space band above a node taken by its name label — its baseline offset plus its font size
+ * (see the <text> under each node), so a flipped action bar can be lifted clear of it. */
+const NODE_LABEL_BAND_DU = 10 + 13;
 /** World-space size of one background grid cell — drawn via an SVG pattern so it pans and zooms
  * with the camera, giving the eye something to track while dragging an otherwise empty canvas. */
 const GRID_CELL_DU = 40;
 /** How far in from the viewport edge an off-screen node's direction marker sits. */
 const OFFSCREEN_INSET_PX = 34;
+/**
+ * How far a node reaches to link up with another, in world units — the radius of the range ring
+ * drawn around every node. Two nodes wire themselves together the moment each sits inside the
+ * other's ring, so "how close do these have to be?" is answered by looking, not by guessing.
+ *
+ * A page-scale number, deliberately not @payload/sim's EDGE_LENGTH_MAX_DU: this page's world is
+ * roughly an order of magnitude smaller than the DU distances the ruleset's [200, 2000] band is
+ * written for (Entry and Core start 240 apart here), so the ruleset's own max would put every
+ * node in range of every other and the ring would say nothing. Defense Grid remains the editor
+ * that builds a ruleset-validated topology; this page is the layout/feel prototype.
+ */
+const LINK_RANGE_DU = 260;
+/** Connector colours: a wide, soft halo in the app's accent blue with a near-white core, which is
+ * what reads as "glowing" against this page's near-black background. */
+const LINK_COLOR = theme.faction.movement;
+const LINK_CORE_COLOR = "#cfe4ff";
 
 function zoomFactorFromWheelDelta(deltaY: number): number {
   return Math.exp(-deltaY * 0.001);
@@ -76,6 +97,30 @@ function worldBoundsOf(nodes: readonly DefendNode[]): WorldBounds {
     maxX: Math.max(...nodes.map((node) => node.x + nodeRadius(node))),
     maxY: Math.max(...nodes.map((node) => node.y + nodeRadius(node))),
   };
+}
+
+export interface NodeLink {
+  readonly from: DefendNode;
+  readonly to: DefendNode;
+  readonly distanceDu: number;
+}
+
+/** Every pair of nodes currently within reach of each other. Links are derived from positions
+ * rather than stored: drag a node out of range and its connector simply stops existing, with no
+ * separate edge list to keep in step. */
+function linksFor(nodes: readonly DefendNode[]): readonly NodeLink[] {
+  const links: NodeLink[] = [];
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const from = nodes[i]!;
+      const to = nodes[j]!;
+      const distanceDu = Math.round(Math.hypot(from.x - to.x, from.y - to.y));
+      if (distanceDu <= LINK_RANGE_DU) {
+        links.push({ from, to, distanceDu });
+      }
+    }
+  }
+  return links;
 }
 
 export interface OffscreenMarker {
@@ -134,8 +179,11 @@ function actionBarPositionFor(
   const screenY = node.y * camera.zoom + camera.offsetY;
   const radius = nodeRadius(node) * camera.zoom;
   let top = screenY + radius + ACTION_BAR_GAP_PX;
-  if (viewport.height > 0 && bar.height > 0 && top + bar.height > viewport.height - EDGE_MARGIN_PX) {
-    top = screenY - radius - ACTION_BAR_GAP_PX - bar.height;
+  // Flip above the node when the bar would otherwise land in the strip the hint and the add-node
+  // button occupy, not merely when it would leave the viewport.
+  if (viewport.height > 0 && bar.height > 0 && top + bar.height > viewport.height - BOTTOM_UI_BAND_PX) {
+    // Clear the node's name label too, which sits in exactly this space above the silhouette.
+    top = screenY - radius - ACTION_BAR_GAP_PX - bar.height - NODE_LABEL_BAND_DU * camera.zoom;
   }
   let left = screenX;
   if (viewport.width > 0 && bar.width > 0) {
@@ -188,6 +236,7 @@ export function Defend(): JSX.Element {
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const detailNode = nodes.find((node) => node.id === detailNodeId) ?? null;
+  const links = linksFor(nodes);
   const offscreenMarkers = offscreenMarkersFor(nodes, { zoom, offsetX, offsetY }, viewportSize);
   /** A selected node the camera has left behind: its buttons would otherwise float over empty
    * canvas pointing at nothing. The selection itself survives, so panning back brings them back. */
@@ -400,6 +449,35 @@ export function Defend(): JSX.Element {
           {/* One uniform scale on both axes — no viewBox ratio to distort silhouettes when the
           canvas is a tall phone screen instead of a wide one. */}
           <g transform={`translate(${offsetX} ${offsetY}) scale(${zoom})`}>
+            {/* The selected node's reach, under both the connectors and the nodes. Only the
+            selected one: these circles are an order of magnitude wider than a node, so drawing
+            every node's at once turns the map into overlapping dashes — and "how close does this
+            have to be?" is a question about the node in your hand, which is the selected one. */}
+            {selectedNode && (
+              <circle
+                data-testid="defend-node-range"
+                data-node-id={selectedNode.id}
+                cx={selectedNode.x}
+                cy={selectedNode.y}
+                r={LINK_RANGE_DU}
+                fill={nodeColor(selectedNode)}
+                fillOpacity={0.04}
+                stroke={nodeColor(selectedNode)}
+                strokeWidth={1.5}
+                strokeDasharray="10 8"
+                opacity={0.6}
+                style={{ pointerEvents: "none" }}
+              />
+            )}
+            {links.map((link) => (
+              <g key={`link-${link.from.id}-${link.to.id}`} data-testid="defend-link" data-from={link.from.id} data-to={link.to.id} data-distance={link.distanceDu} style={{ pointerEvents: "none" }}>
+                {/* Three stacked strokes rather than an SVG blur filter: same bloom, a fraction of
+                the per-frame cost while a node is being dragged around on a phone. */}
+                <line className="payload-defend-link-halo" x1={link.from.x} y1={link.from.y} x2={link.to.x} y2={link.to.y} stroke={LINK_COLOR} strokeWidth={14} strokeLinecap="round" opacity={0.16} />
+                <line x1={link.from.x} y1={link.from.y} x2={link.to.x} y2={link.to.y} stroke={LINK_COLOR} strokeWidth={6} strokeLinecap="round" opacity={0.3} />
+                <line x1={link.from.x} y1={link.from.y} x2={link.to.x} y2={link.to.y} stroke={LINK_CORE_COLOR} strokeWidth={2} strokeLinecap="round" />
+              </g>
+            ))}
             {nodes.map((node) => (
               <g
                 key={node.id}
@@ -499,7 +577,7 @@ export function Defend(): JSX.Element {
         </div>
 
         <p className="payload-defend-hint" data-testid="defend-hint">
-          {isDraggingNode ? "Tarik untuk memindahkan node." : "Geser untuk menggerakkan kamera · cubit untuk zoom · tap node untuk aksinya."}
+          {isDraggingNode ? "Node yang masuk lingkaran langsung tersambung." : "Geser & cubit untuk kamera · tap node untuk aksinya · node dalam lingkaran otomatis tersambung."}
         </p>
 
         <button
@@ -555,6 +633,14 @@ export function Defend(): JSX.Element {
                 <dd data-testid="defend-detail-position">
                   {detailNode.x}, {detailNode.y} DU
                 </dd>
+              </div>
+              <div>
+                <dt>Jangkauan</dt>
+                <dd data-testid="defend-detail-range">{LINK_RANGE_DU} DU</dd>
+              </div>
+              <div>
+                <dt>Terhubung</dt>
+                <dd data-testid="defend-detail-links">{links.filter((link) => link.from.id === detailNode.id || link.to.id === detailNode.id).length} node</dd>
               </div>
             </dl>
             <button type="button" data-testid="defend-detail-close" onClick={closeDetail}>

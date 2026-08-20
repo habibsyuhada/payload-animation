@@ -29,9 +29,12 @@ export const MAX_ZOOM = 3;
 /** Breathing room (screen px) left around the content by fitToBounds. */
 const FIT_PADDING_PX = 40;
 
+/** 240 DU apart — inside Defend.tsx's LINK_RANGE_DU, so the pair opens already wired together and
+ * the connector is something the player breaks by dragging them apart, not something they have to
+ * discover exists. */
 const INITIAL_NODES: readonly DefendNode[] = [
-  { id: ENTRY_ID, type: "entry", x: -170, y: 0 },
-  { id: CORE_ID, type: "core", x: 170, y: 0 },
+  { id: ENTRY_ID, type: "entry", x: -120, y: 0 },
+  { id: CORE_ID, type: "core", x: 120, y: 0 },
 ];
 
 /** Every node type the player can actually place — Entry and Core come with the graph. */

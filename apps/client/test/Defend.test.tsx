@@ -54,8 +54,10 @@ async function expectGone(testId: string): Promise<void> {
   });
 }
 
+/** Qualified by testid, not by data-node-id alone: range rings and off-screen markers carry the
+ * same node id, so a bare attribute selector can land on one of those instead of the node. */
 function nodeGroup(id: number): SVGGElement {
-  return document.querySelector(`[data-node-id="${id}"]`) as SVGGElement;
+  return document.querySelector(`[data-testid=defend-node][data-node-id="${id}"]`) as SVGGElement;
 }
 
 function nodePosition(id: number): { x: number; y: number } {
@@ -130,6 +132,65 @@ describe("Defend page", () => {
     // would mean the camera (or the viewport's own aspect) is stretching it.
     const core = nodeGroup(CORE_ID).querySelector("polygon")!.getBoundingClientRect();
     expect(Math.abs(core.width - core.height)).toBeLessThan(1);
+  });
+
+  it("shows the selected node's link range as a ring, and only that node's", async () => {
+    await findByTestId("defend-canvas");
+    expect(page.getByTestId("defend-node-range").elements()).toHaveLength(0);
+
+    tapNode(CORE_ID);
+    const ring = await findByTestId("defend-node-range");
+    expect(ring.getAttribute("data-node-id")).toBe(String(CORE_ID));
+    expect(page.getByTestId("defend-node-range").elements()).toHaveLength(1);
+    // Centred on the node it belongs to, in the same world units the nodes are placed in.
+    expect(Number(ring.getAttribute("cx"))).toBe(nodePosition(CORE_ID).x);
+  });
+
+  it("wires nodes in range together with a glowing connector", async () => {
+    await findByTestId("defend-canvas");
+    const links = page.getByTestId("defend-link").elements();
+    expect(links).toHaveLength(1);
+    const link = links[0]!;
+    expect([link.getAttribute("data-from"), link.getAttribute("data-to")].sort()).toEqual([String(CORE_ID), String(ENTRY_ID)].sort());
+    // Glow = a wide pulsing halo stroke under a bright thin core, not one flat line.
+    expect(link.querySelectorAll("line")).toHaveLength(3);
+    expect(link.querySelector(".payload-defend-link-halo")).not.toBeNull();
+  });
+
+  it("breaks the connector when a node is dragged out of range, and remakes it on the way back", async () => {
+    tapNode(CORE_ID);
+    await findByTestId("defend-action-move");
+    const { zoom } = useDefendStore.getState();
+    // 240 DU apart to start against 260 DU of reach, so +40 DU already breaks it. Deliberately no
+    // further than that: pushing the node off-screen would take its move button (and the drag
+    // back) with it.
+    const outOfRangePx = 40 * zoom;
+
+    dragMoveHandle(outOfRangePx, 0);
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-link").elements().length !== 0) {
+        throw new Error("connector is still there");
+      }
+    });
+
+    dragMoveHandle(-outOfRangePx, 0);
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-link").elements().length !== 1) {
+        throw new Error("connector has not come back");
+      }
+    });
+  });
+
+  it("wires a newly added node to everything already in its range", async () => {
+    await page.getByTestId("defend-add-node").click();
+    await findByTestId("defend-picker");
+    await page.getByText("Router").click();
+    // Dropped at the centre of the screen, i.e. between Entry and Core: in range of both.
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-link").elements().length !== 3) {
+        throw new Error("expected Entry-Core plus both new links");
+      }
+    });
   });
 
   it("shows the three node action buttons on tap, and hides them again on a second tap", async () => {
@@ -232,7 +293,8 @@ describe("Defend page", () => {
     await page.getByTestId("defend-action-detail").click();
     const detail = await findByTestId("defend-detail");
     expect(detail.textContent).toContain("Entry");
-    expect((await findByTestId("defend-detail-position")).textContent).toContain("-170, 0");
+    expect((await findByTestId("defend-detail-position")).textContent).toContain("-120, 0");
+    expect((await findByTestId("defend-detail-links")).textContent).toContain("1 node");
 
     await page.getByTestId("defend-detail-close").click();
     await expectGone("defend-detail");

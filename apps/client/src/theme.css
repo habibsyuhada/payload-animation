@@ -447,6 +447,27 @@ select {
   font-weight: 700;
 }
 
+/* The outer halo of a connector, breathing slowly so a live link reads as powered rather than
+   drawn-on. Only the widest, faintest stroke animates — the bright core stays steady. */
+@keyframes payload-defend-link-pulse {
+  from {
+    opacity: 0.12;
+  }
+  to {
+    opacity: 0.34;
+  }
+}
+
+.payload-defend-link-halo {
+  animation: payload-defend-link-pulse 2.4s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .payload-defend-link-halo {
+    animation: none;
+  }
+}
+
 /* Edge marker for a node the camera has left off-screen: a pill pinned just inside the viewport
    edge, in that node's direction. Tap to bring the node back to the middle. */
 .payload-defend-offscreen {
@@ -529,6 +550,8 @@ select {
   background: rgba(26, 30, 42, 0.92);
   border: 1px solid var(--color-border);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  /* Above the hint strip and the add-node button, never tucked behind them. */
+  z-index: 4;
 }
 
 .payload-defend-action-btn {
