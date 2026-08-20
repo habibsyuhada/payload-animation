@@ -203,6 +203,49 @@ describe("Defend page", () => {
     );
   });
 
+  it("shows the Core losing health while the virus chews on it", async () => {
+    await page.getByTestId("defend-test").click();
+    const coreBar = await findByTestId("defend-playback-core-hp");
+    expect(coreBar.getAttribute("data-node-id")).toBe(String(CORE_ID));
+    expect(Number(coreBar.getAttribute("data-core-hp"))).toBe(100);
+
+    await vi.waitFor(
+      () => {
+        const hp = Number(page.getByTestId("defend-playback-core-hp").query()?.getAttribute("data-core-hp") ?? 100);
+        if (hp >= 100) {
+          throw new Error(`Core has not taken damage yet (${hp}%)`);
+        }
+      },
+      { timeout: 6000 },
+    );
+    // And the damage it's taking is called out on the node itself.
+    await vi.waitFor(
+      () => {
+        if (page.getByTestId("defend-playback-node-damage").elements().length === 0) {
+          throw new Error("no damage number on the Core yet");
+        }
+      },
+      { timeout: 6000 },
+    );
+  });
+
+  it("lists each attacker's logic blocks, movement first", async () => {
+    await page.getByTestId("defend-test").click();
+    await findByTestId("defend-test-trials");
+
+    const ghost = document.querySelector("[data-testid=defend-trial-loadout][data-virus=ghost-crawler]");
+    expect(ghost).not.toBeNull();
+    const chips = [...ghost!.querySelectorAll("li")].map((chip) => chip.textContent?.trim());
+    // Its movement block leads, then the loadout in order — the same names Virus Lab builds from.
+    expect(chips[0]).toBe("Backtrack");
+    expect(chips).toContain("Cloak I");
+    expect(chips).toContain("Self Repair I");
+
+    // Tiers are shown, so two builds carrying the same block at different strengths read apart.
+    const survivor = document.querySelector("[data-testid=defend-trial-loadout][data-virus=survivor]");
+    expect([...survivor!.querySelectorAll("li")].map((chip) => chip.textContent?.trim())).toContain("Self Repair II");
+  });
+
   it("can pause and scrub the battle, and scrubbing back restores the health it had then", async () => {
     await page.getByTestId("defend-test").click();
     await findByTestId("defend-playback-controls");

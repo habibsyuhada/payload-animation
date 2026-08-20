@@ -1,4 +1,4 @@
-import { compileTimeline, sampleIntegrity, samplePosition, type Timeline, type Vec2 } from "@payload/replay";
+import { compileTimeline, sampleCoreHp, sampleIntegrity, samplePosition, type Timeline, type Vec2 } from "@payload/replay";
 import type { BattleLog } from "@payload/sim";
 import type { DefendNode } from "../state/defendStore.js";
 
@@ -31,19 +31,29 @@ export interface Shot {
 export interface NodeFlash {
   readonly nodeId: number;
   readonly progress: number;
-  readonly kind: "damage" | "destroyed" | "status";
+  readonly kind: "damage" | "node-hit" | "destroyed" | "status";
+}
+
+export interface NodeHit {
+  readonly nodeId: number;
+  readonly damage: number;
+  readonly progress: number;
 }
 
 export interface PlaybackFrame {
   readonly virusPosition: Vec2;
   /** 0..1 of starting Integrity. */
   readonly integrity: number;
+  /** 0..1 of the Core's starting HP — the defender's own health bar. */
+  readonly coreHp: number;
   readonly virusAlive: boolean;
   /** Shots in flight right now, drawn from their sentry to the virus. */
   readonly shots: readonly Shot[];
   readonly flashes: readonly NodeFlash[];
   /** Damage taken within the last effect window, for the floating "-60" numbers. */
   readonly recentHits: readonly { readonly damage: number; readonly progress: number }[];
+  /** Damage the virus dealt to nodes in the same window — what the Core losing HP looks like. */
+  readonly nodeHits: readonly NodeHit[];
   readonly done: boolean;
 }
 
@@ -75,6 +85,7 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
   const shots: Shot[] = [];
   const flashes: NodeFlash[] = [];
   const recentHits: { damage: number; progress: number }[] = [];
+  const nodeHits: NodeHit[] = [];
   for (const marker of timeline.markers) {
     if (marker.t > t || t - marker.t > EFFECT_WINDOW_SECONDS) {
       continue;
@@ -90,6 +101,11 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
       // "virus-damaged" names its source in `actor`), which is what the floating number reports.
       recentHits.push({ damage: marker.amount ?? 0, progress });
     }
+    // Damage the virus dealt TO a node: the Core being drained, a Firewall being chewed through.
+    if (marker.kind === "node-hit" && node) {
+      flashes.push({ nodeId: node.id, progress, kind: "node-hit" });
+      nodeHits.push({ nodeId: node.id, damage: marker.amount ?? 0, progress });
+    }
     if (marker.kind === "destroyed" && node) {
       flashes.push({ nodeId: node.id, progress, kind: "destroyed" });
     }
@@ -101,10 +117,29 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
   return {
     virusPosition,
     integrity: sampleIntegrity(timeline, t),
+    coreHp: sampleCoreHp(timeline, t),
     virusAlive: !died || t < died.t,
     shots,
-    flashes,
-    recentHits,
+    flashes: newestPerKey(flashes, (flash) => `${flash.nodeId}:${flash.kind}`),
+    // A Core being drained takes damage EVERY tick (20ms apart) while the effect window is 300ms,
+    // so without this the same spot carries half a dozen stacked numbers that no one can read.
+    // One number per victim, the freshest, reads as a steady beat of damage instead of a pile.
+    recentHits: newestPerKey(recentHits, () => "virus"),
+    nodeHits: newestPerKey(nodeHits, (hit) => String(hit.nodeId)),
     done: t >= playbackDurationSeconds(timeline),
   };
+}
+
+/** Keeps only the most recent entry per key — "most recent" being the smallest progress, since
+ * progress counts up from 0 at the moment the effect fired. */
+function newestPerKey<T extends { progress: number }>(entries: readonly T[], keyOf: (entry: T) => string): T[] {
+  const newest = new Map<string, T>();
+  for (const entry of entries) {
+    const key = keyOf(entry);
+    const current = newest.get(key);
+    if (!current || entry.progress < current.progress) {
+      newest.set(key, entry);
+    }
+  }
+  return [...newest.values()];
 }

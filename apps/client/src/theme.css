@@ -530,6 +530,26 @@ select {
   cursor: pointer;
 }
 
+.payload-defend-loadout {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+}
+
+.payload-defend-block {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: 0.3rem;
+  background: var(--color-background-panel-raised);
+  color: var(--color-text);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
 .payload-defend-trial-watch {
   margin: 0;
   padding: 0.15rem 0.45rem;

@@ -1,7 +1,8 @@
-import { getDefenseNodeCost, getIceSentryConfig, type BattleLog } from "@payload/sim";
+import { getDefenseNodeCost, getIceSentryConfig, type BattleLog, type BlockTier } from "@payload/sim";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
+import { findLogicBlockEntry, findMovementEntry, type BlockCategory, type LogicBlockCatalogEntry } from "../data/blockCatalog.js";
 import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
 import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
 import {
@@ -104,6 +105,18 @@ const PICKER_CATALOG: readonly { type: PlaceableNodeType; label: string; color: 
   { type: "core", label: "Core", color: CORE_COLOR, shape: CORE_SHAPE, tiered: false },
   ...PLACEABLE_NODE_CATALOG.map((entry) => ({ type: entry.type as PlaceableNodeType, label: entry.label, color: entry.color, shape: entry.shape, tiered: entry.tiered })),
 ];
+
+/** Block-category colours, same mapping Virus Lab uses so a block reads the same on both screens. */
+function categoryColor(category: BlockCategory): string {
+  return category === "movement" ? theme.faction.movement : theme.faction[category];
+}
+
+const ROMAN_TIER: Record<BlockTier, string> = { 1: "I", 2: "II", 3: "III" };
+
+/** The tier-specific line for a block, for the chip's tooltip — what this tier actually does. */
+function findLogicBlockTierDescription(entry: LogicBlockCatalogEntry, tier: BlockTier): string {
+  return entry.tiers.find((candidate) => candidate.tier === tier)?.description ?? entry.tiers[0]!.description;
+}
 
 const VERDICT_COPY: Record<DefenseVerdict, string> = {
   impenetrable: "❌ Tidak ada satu pun penyerang yang tembus. Pertahanan seperti ini tidak adil dan akan ditolak saat publish.",
@@ -638,8 +651,47 @@ export function Defend(): JSX.Element {
                 {playbackFrame.flashes.map((flash, index) => {
                   const node = nodes.find((candidate) => candidate.id === flash.nodeId);
                   if (!node) return null;
-                  return <circle key={`flash-${index}`} cx={node.x} cy={node.y} r={nodeRadius(node) + 6 + flash.progress * 26} fill="none" stroke={flash.kind === "destroyed" ? theme.faction.attack : nodeColor(node)} strokeWidth={3} opacity={1 - flash.progress} />;
+                  // A node being hit BY the virus flashes in the attacker's red, not its own
+                  // colour — it's taking damage, not dealing it.
+                  const stroke = flash.kind === "destroyed" || flash.kind === "node-hit" ? theme.faction.attack : nodeColor(node);
+                  return <circle key={`flash-${index}`} cx={node.x} cy={node.y} r={nodeRadius(node) + 6 + flash.progress * 26} fill="none" stroke={stroke} strokeWidth={3} opacity={1 - flash.progress} />;
                 })}
+
+                {/* Every node the virus is currently chewing on gets the damage it's taking,
+                floating off it — the Core draining tick by tick is the whole battle. */}
+                {playbackFrame.nodeHits
+                  .filter((hit) => hit.damage > 0)
+                  .map((hit, index) => {
+                    const node = nodes.find((candidate) => candidate.id === hit.nodeId);
+                    if (!node) return null;
+                    return (
+                      <text key={`nodehit-${index}`} data-testid="defend-playback-node-damage" data-node-id={node.id} x={node.x + nodeRadius(node) + 6} y={node.y - nodeRadius(node) - hit.progress * 18} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
+                        -{hit.damage}
+                      </text>
+                    );
+                  })}
+
+                {/* The defender's own health bar: one per Core, sitting under it for the whole
+                battle (not just while it's being hit) so "how close am I to losing?" is always
+                answerable at a glance. */}
+                {nodes
+                  .filter((node) => node.type === "core")
+                  .map((core) => (
+                    <g key={`corehp-${core.id}`} data-testid="defend-playback-core-hp" data-node-id={core.id} data-core-hp={Math.round(playbackFrame.coreHp * 100)}>
+                      <rect x={core.x - 30} y={core.y + nodeRadius(core) + 26} width={60} height={10} rx={5} fill="#000" opacity={0.6} />
+                      <rect
+                        x={core.x - 28.5}
+                        y={core.y + nodeRadius(core) + 27.5}
+                        width={57 * playbackFrame.coreHp}
+                        height={7}
+                        rx={3.5}
+                        fill={playbackFrame.coreHp > 0.5 ? CORE_COLOR : playbackFrame.coreHp > 0.25 ? theme.faction.sensor : theme.faction.attack}
+                      />
+                      <text x={core.x} y={core.y + nodeRadius(core) + 50} textAnchor="middle" fontSize={12} fontWeight={700} fill={playbackFrame.coreHp > 0.25 ? theme.textMuted : theme.faction.attack}>
+                        Core {Math.round(playbackFrame.coreHp * 100)}%
+                      </text>
+                    </g>
+                  ))}
 
                 {/* ICE Sentry fire: a tracer snapping from the sentry to wherever the virus is,
                 plus a muzzle flare, so a hit is something you see rather than infer. */}
@@ -673,6 +725,11 @@ export function Defend(): JSX.Element {
                       rx={3}
                       fill={playbackFrame.integrity > 0.5 ? theme.faction.stealth : playbackFrame.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
                     />
+                    {/* Labelled because the virus parks ON the Core for most of a battle, where an
+                    unlabelled bar is indistinguishable from the Core's own. */}
+                    <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y + 36} textAnchor="middle" fontSize={11} fontWeight={700} fill={theme.textMuted}>
+                      Virus {Math.round(playbackFrame.integrity * 100)}%
+                    </text>
 
                     {/* Floating damage numbers, drifting up as they fade. */}
                     {playbackFrame.recentHits
@@ -888,6 +945,21 @@ export function Defend(): JSX.Element {
                     <span className="payload-defend-trial-fill" style={{ width: `${Math.round(trial.winrate * 100)}%`, background: trial.wins > 0 ? theme.faction.stealth : theme.faction.attack }} />
                   </div>
                   <small>{trial.virus.description}</small>
+                  {/* The attacker's actual loadout — the same block vocabulary Virus Lab builds
+                  from, so "why did this one get through?" is answerable by reading it. */}
+                  <ul className="payload-defend-loadout" data-testid="defend-trial-loadout" data-virus={trial.virus.id}>
+                    <li className="payload-defend-block" style={{ borderColor: categoryColor("movement") }} title={findMovementEntry(trial.virus.virus.movement.kind).description}>
+                      {findMovementEntry(trial.virus.virus.movement.kind).label}
+                    </li>
+                    {trial.virus.virus.blocks.map((block, index) => {
+                      const entry = findLogicBlockEntry(block.kind);
+                      return (
+                        <li key={`${block.kind}-${index}`} className="payload-defend-block" style={{ borderColor: categoryColor(entry.category) }} title={findLogicBlockTierDescription(entry, block.tier)}>
+                          {entry.label} {ROMAN_TIER[block.tier]}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </li>
               ))}
             </ul>

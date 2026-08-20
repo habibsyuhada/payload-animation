@@ -29,7 +29,11 @@ export interface EntityTrack {
   readonly opacity: readonly Keyframe<number>[];
 }
 
-export type TimelineMarkerKind = "damage" | "destroyed" | "died" | "won" | "timeout" | "status";
+/** "damage" is always damage taken by the VIRUS (its source node is the marker's nodeId);
+ * "node-hit" is the mirror image — damage the virus dealt TO a node, which is what chewing
+ * through a Firewall or draining the Core looks like. Keeping them apart matters: a renderer that
+ * confused the two would draw the Core's own HP loss as if the virus had been shot. */
+export type TimelineMarkerKind = "damage" | "node-hit" | "destroyed" | "died" | "won" | "timeout" | "status";
 
 export interface TimelineMarker {
   readonly t: number;
@@ -65,6 +69,9 @@ export interface Timeline {
   /** The virus's health over time, as a 0..1 ratio of its starting Integrity — what a health bar
    * renders from. Compiled from the log's own damage/repair deltas, never recomputed. */
   readonly virusIntegrity: readonly Keyframe<number>[];
+  /** The Core's health over time, same 0..1 shape. The battle is won when this hits 0, so it is
+   * the other half of the story a health bar tells. */
+  readonly coreHp: readonly Keyframe<number>[];
 }
 
 /**
@@ -125,6 +132,7 @@ function compileVirusPositionTrack(events: readonly BattleEvent[], layout: Layou
 
 const MARKER_KIND_BY_EVENT: Partial<Record<BattleEventType, TimelineMarkerKind>> = {
   "virus-damaged": "damage",
+  "node-damaged": "node-hit",
   "node-destroyed": "destroyed",
   "virus-died": "died",
   "battle-won": "won",
@@ -185,6 +193,27 @@ function compileMarkers(events: readonly BattleEvent[], nodeIds: ReadonlySet<num
   return markers;
 }
 
+/** The Core's health, replayed from the `node-damaged` events aimed at it. Unlike the virus's
+ * Integrity there's no constant to mirror: the log carries the Core's starting HP in its own
+ * input, so the ratio is exact for any account tier. */
+function compileCoreHpTrack(log: BattleLog): Keyframe<number>[] {
+  const coreId = String(log.input.defense.coreNodeId);
+  const startingHp = log.input.defense.coreHp;
+  const keyframes: Keyframe<number>[] = [{ t: 0, value: 1 }];
+  if (startingHp <= 0) {
+    return keyframes;
+  }
+  let hp = startingHp;
+  for (const event of log.events) {
+    if (event.type !== "node-damaged" || event.target !== coreId) {
+      continue;
+    }
+    hp = Math.max(0, Math.min(startingHp, hp + (event.delta ?? 0)));
+    keyframes.push({ t: event.tick * TICK_SECONDS, value: hp / startingHp });
+  }
+  return keyframes;
+}
+
 export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
   const lastEvent = log.events[log.events.length - 1];
   const staticNodes: StaticNode[] = log.input.defense.nodes.map((node) => ({
@@ -205,20 +234,31 @@ export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
     tracks: [virusTrack],
     markers: compileMarkers(log.events, new Set(staticNodes.map((node) => node.id))),
     virusIntegrity: compileVirusIntegrityTrack(log.events),
+    coreHp: compileCoreHpTrack(log),
   };
 }
 
-/** The virus's health at T as a 0..1 ratio — a step function, not an interpolation: a hit is
- * instant, and sampling between two hits must report the health it actually had then. */
-export function sampleIntegrity(timeline: Timeline, t: number): number {
-  let value = timeline.virusIntegrity[0]?.value ?? 1;
-  for (const keyframe of timeline.virusIntegrity) {
+/** Health at T as a 0..1 ratio — a step function, not an interpolation: a hit is instant, and
+ * sampling between two hits must report the health it actually had then. */
+function sampleStep(keyframes: readonly Keyframe<number>[], t: number): number {
+  let value = keyframes[0]?.value ?? 1;
+  for (const keyframe of keyframes) {
     if (keyframe.t > t) {
       break;
     }
     value = keyframe.value;
   }
   return value;
+}
+
+/** The virus's health at T, as a 0..1 ratio of what it started with. */
+export function sampleIntegrity(timeline: Timeline, t: number): number {
+  return sampleStep(timeline.virusIntegrity, t);
+}
+
+/** The Core's health at T, as a 0..1 ratio of what it started with. */
+export function sampleCoreHp(timeline: Timeline, t: number): number {
+  return sampleStep(timeline.coreHp, t);
 }
 
 function sampleKeyframes<T>(keyframes: readonly Keyframe<T>[], t: number, mixFn: (a: T, b: T, tt: number) => T, fallback: T): T {
