@@ -1,4 +1,4 @@
-import type { BlockTier, DefenseNodeType } from "@payload/sim";
+import { EDGE_LENGTH_MIN_DU, type BlockTier, type DefenseNodeType } from "@payload/sim";
 import { create } from "zustand";
 
 /**
@@ -40,6 +40,42 @@ const INITIAL_NODES: readonly DefendNode[] = [
 /** Every node type the player can actually place — Entry and Core come with the graph. */
 export type PlaceableNodeType = Exclude<DefenseNodeType, "entry" | "core">;
 
+/**
+ * How far a node reaches to link up with another, in world units — the radius of the range ring
+ * Defend.tsx draws around the selected node. Two nodes wire themselves together the moment each
+ * sits inside the other's ring, so "how close do these have to be?" is answered by looking.
+ *
+ * A page-scale number, deliberately not @payload/sim's EDGE_LENGTH_MAX_DU: this page's world is
+ * roughly an order of magnitude smaller than the DU distances the ruleset's [200, 2000] band is
+ * written for (Entry and Core start 240 apart here), so the ruleset's own max would put every
+ * node in range of every other and the ring would say nothing.
+ */
+export const LINK_RANGE_DU = 260;
+
+export interface NodeLink {
+  readonly from: DefendNode;
+  readonly to: DefendNode;
+  readonly distanceDu: number;
+}
+
+/** Every pair of nodes currently within reach of each other. Links are derived from positions
+ * rather than stored: drag a node out of range and its connector simply stops existing, with no
+ * separate edge list to keep in step. */
+export function linksFor(nodes: readonly DefendNode[]): readonly NodeLink[] {
+  const links: NodeLink[] = [];
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const from = nodes[i]!;
+      const to = nodes[j]!;
+      const distanceDu = Math.round(Math.hypot(from.x - to.x, from.y - to.y));
+      if (distanceDu <= LINK_RANGE_DU) {
+        links.push({ from, to, distanceDu });
+      }
+    }
+  }
+  return links;
+}
+
 /** Entry and Core are system-owned (GDD §5): the player may reposition them but never delete
  * them — a graph without either has no attack path at all. */
 export function isRemovable(node: DefendNode): boolean {
@@ -79,6 +115,38 @@ export interface DefendState {
   readonly reset: () => void;
 }
 
+/** Closest two nodes may be placed automatically. The ruleset's own minimum edge length, so a
+ * layout the page built by itself never produces an edge the sim would reject as too short —
+ * and it comfortably clears the largest node silhouette, so nothing lands on top of anything.
+ * Dragging past it afterwards is still the player's call; this only governs `addNode`. */
+const MIN_PLACEMENT_GAP_DU = EDGE_LENGTH_MIN_DU;
+
+/** The requested point if it's clear, otherwise the nearest free point on a widening spiral around
+ * it. Without this, adding several nodes in a row stacks them all on the exact same spot (each one
+ * lands at the centre of the screen) and the player has to drag them apart before they can even
+ * tell how many they added. */
+function freeSpotNear(nodes: readonly DefendNode[], x: number, y: number): { x: number; y: number } {
+  const isClear = (candidateX: number, candidateY: number): boolean => nodes.every((node) => Math.hypot(node.x - candidateX, node.y - candidateY) >= MIN_PLACEMENT_GAP_DU);
+  if (isClear(x, y)) {
+    return { x, y };
+  }
+  for (let ring = 1; ring <= 6; ring += 1) {
+    const radius = MIN_PLACEMENT_GAP_DU * ring;
+    const steps = 6 * ring;
+    for (let step = 0; step < steps; step += 1) {
+      // Start each ring a little rotated (the +ring) so successive rings don't all place their
+      // first candidate due east, which would line new nodes up in a row.
+      const angle = ((step + ring * 0.5) / steps) * Math.PI * 2;
+      const candidateX = Math.round(x + Math.cos(angle) * radius);
+      const candidateY = Math.round(y + Math.sin(angle) * radius);
+      if (isClear(candidateX, candidateY)) {
+        return { x: candidateX, y: candidateY };
+      }
+    }
+  }
+  return { x, y };
+}
+
 let nextNodeId = FIRST_PLACEABLE_ID;
 
 export const useDefendStore = create<DefendState>((set) => ({
@@ -97,7 +165,10 @@ export const useDefendStore = create<DefendState>((set) => ({
   addNode: (type, x, y, tier) => {
     const id = nextNodeId;
     nextNodeId += 1;
-    set((state) => ({ nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x, y }], selectedNodeId: id }));
+    set((state) => {
+      const spot = freeSpotNear(state.nodes, x, y);
+      return { nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x: spot.x, y: spot.y }], selectedNodeId: id };
+    });
   },
 
   moveNode: (id, x, y) => set((state) => ({ nodes: state.nodes.map((node) => (node.id === id ? { ...node, x, y } : node)) })),

@@ -447,6 +447,117 @@ select {
   font-weight: 700;
 }
 
+.payload-defend-test-btn {
+  /* The topbar itself is pointer-events: none so camera drags pass through it — every control
+     inside has to opt back in, same as .payload-defend-exit. */
+  pointer-events: auto;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.78rem;
+  background: rgba(26, 30, 42, 0.9);
+}
+
+.payload-modal--wide {
+  max-width: 30rem;
+}
+
+.payload-defend-verdict {
+  margin: 0 0 0.9rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.6rem;
+  border-left: 3px solid var(--color-border);
+  background: var(--color-background-panel-raised);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.payload-defend-verdict--impenetrable {
+  border-left-color: var(--color-faction-attack);
+}
+
+.payload-defend-verdict--breachable {
+  border-left-color: var(--color-faction-stealth);
+}
+
+.payload-defend-verdict--too-easy {
+  border-left-color: var(--color-faction-sensor);
+}
+
+.payload-defend-showcase-caption {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.payload-defend-showcase-caption strong {
+  color: var(--color-text);
+}
+
+.payload-defend-trials {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.payload-defend-trials small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-trial-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.payload-defend-trial-win {
+  color: var(--color-faction-stealth);
+  font-weight: 600;
+}
+
+.payload-defend-trial-loss {
+  color: var(--color-faction-attack);
+  font-weight: 600;
+}
+
+.payload-defend-trial-track {
+  height: 0.35rem;
+  margin-top: 0.25rem;
+  border-radius: 999px;
+  background: var(--color-background-panel-raised);
+  overflow: hidden;
+}
+
+.payload-defend-trial-fill {
+  display: block;
+  height: 100%;
+}
+
+.payload-defend-structural {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.payload-defend-structural summary {
+  cursor: pointer;
+}
+
+.payload-defend-structural ul {
+  margin: 0.4rem 0;
+  padding-left: 1.1rem;
+  line-height: 1.4;
+}
+
 /* The outer halo of a connector, breathing slowly so a live link reads as powered rather than
    drawn-on. Only the widest, faintest stroke animates — the bright core stays steady. */
 @keyframes payload-defend-link-pulse {

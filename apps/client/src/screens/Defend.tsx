@@ -2,6 +2,8 @@ import { getDefenseNodeCost } from "@payload/sim";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
+import { ReplayPlayer } from "../components/ReplayPlayer.js";
+import { replayLayoutFor, runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -14,7 +16,7 @@ import {
   PLACEABLE_NODE_CATALOG,
   type NodeShape,
 } from "../data/defenseNodeCatalog.js";
-import { isRemovable, useDefendStore, type DefendNode, type PlaceableNodeType, type WorldBounds } from "../state/defendStore.js";
+import { isRemovable, linksFor, LINK_RANGE_DU, useDefendStore, type DefendNode, type PlaceableNodeType, type WorldBounds } from "../state/defendStore.js";
 import { theme } from "../theme.js";
 
 /** Raw CSS-pixel movement below which a press-and-release still counts as a tap, not a drag. */
@@ -33,18 +35,6 @@ const NODE_LABEL_BAND_DU = 10 + 13;
 const GRID_CELL_DU = 40;
 /** How far in from the viewport edge an off-screen node's direction marker sits. */
 const OFFSCREEN_INSET_PX = 34;
-/**
- * How far a node reaches to link up with another, in world units — the radius of the range ring
- * drawn around every node. Two nodes wire themselves together the moment each sits inside the
- * other's ring, so "how close do these have to be?" is answered by looking, not by guessing.
- *
- * A page-scale number, deliberately not @payload/sim's EDGE_LENGTH_MAX_DU: this page's world is
- * roughly an order of magnitude smaller than the DU distances the ruleset's [200, 2000] band is
- * written for (Entry and Core start 240 apart here), so the ruleset's own max would put every
- * node in range of every other and the ring would say nothing. Defense Grid remains the editor
- * that builds a ruleset-validated topology; this page is the layout/feel prototype.
- */
-const LINK_RANGE_DU = 260;
 /** Connector colours: a wide, soft halo in the app's accent blue with a near-white core, which is
  * what reads as "glowing" against this page's near-black background. */
 const LINK_COLOR = theme.faction.movement;
@@ -99,28 +89,18 @@ function worldBoundsOf(nodes: readonly DefendNode[]): WorldBounds {
   };
 }
 
-export interface NodeLink {
-  readonly from: DefendNode;
-  readonly to: DefendNode;
-  readonly distanceDu: number;
-}
+const VERDICT_COPY: Record<DefenseVerdict, string> = {
+  impenetrable: "❌ Tidak ada satu pun penyerang yang tembus. Pertahanan seperti ini tidak adil dan akan ditolak saat publish.",
+  breachable: "✅ Bisa ditembus, tapi tidak gratis — sebagian penyerang lolos, sebagian gagal. Ini yang kita mau.",
+  "too-easy": "⚠️ Semua penyerang masuk hampir selalu. Sah, tapi kamu akan kalah terus.",
+};
 
-/** Every pair of nodes currently within reach of each other. Links are derived from positions
- * rather than stored: drag a node out of range and its connector simply stops existing, with no
- * separate edge list to keep in step. */
-function linksFor(nodes: readonly DefendNode[]): readonly NodeLink[] {
-  const links: NodeLink[] = [];
-  for (let i = 0; i < nodes.length; i += 1) {
-    for (let j = i + 1; j < nodes.length; j += 1) {
-      const from = nodes[i]!;
-      const to = nodes[j]!;
-      const distanceDu = Math.round(Math.hypot(from.x - to.x, from.y - to.y));
-      if (distanceDu <= LINK_RANGE_DU) {
-        links.push({ from, to, distanceDu });
-      }
-    }
-  }
-  return links;
+/** Replay canvas size: fills the dialog's own content width (the modal caps at 26rem/416px, less
+ * its 1.25rem padding), floored so a very narrow phone still gets a usable picture. */
+function replayCanvasSizeFor(viewportWidth: number): { width: number; height: number } {
+  const available = Math.max(0, viewportWidth - 48 - 40);
+  const width = Math.round(Math.max(260, Math.min(376, available || 376)));
+  return { width, height: Math.round(width * 0.72) };
 }
 
 export interface OffscreenMarker {
@@ -231,6 +211,8 @@ export function Defend(): JSX.Element {
   const didFitRef = useRef(false);
   const [isDraggingNode, setDraggingNode] = useState(false);
   const [isPickerOpen, setPickerOpen] = useState(false);
+  const [isTesting, setTesting] = useState(false);
+  const [testReport, setTestReport] = useState<DefenseTestReport | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [actionBarSize, setActionBarSize] = useState({ width: 0, height: 0 });
 
@@ -242,6 +224,9 @@ export function Defend(): JSX.Element {
    * canvas pointing at nothing. The selection itself survives, so panning back brings them back. */
   const selectionIsOffscreen = offscreenMarkers.some((marker) => marker.node.id === selectedNodeId);
   const actionBarPosition = selectedNode ? actionBarPositionFor(selectedNode, { zoom, offsetX, offsetY }, viewportSize, actionBarSize) : null;
+  /** The replay canvas is a fixed pixel bitmap, so it gets sized once from the viewport rather
+   * than stretched by CSS — stretching a canvas resamples it and the node glyphs go soft. */
+  const replaySize = replayCanvasSizeFor(viewportSize.width);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -413,6 +398,18 @@ export function Defend(): JSX.Element {
     setDraggingNode(true);
   }
 
+  /** Runs the gauntlet against the layout as it stands. Deferred by one frame rather than run
+   * inline: the whole thing is ~30ms of straight-line simulation, which would otherwise block the
+   * paint that shows the player anything is happening at all. */
+  function handleTestDefense(): void {
+    setTesting(true);
+    setTestReport(null);
+    requestAnimationFrame(() => {
+      setTestReport(runDefenseTest(useDefendStore.getState().nodes));
+      setTesting(false);
+    });
+  }
+
   /** Drops the picked type in the middle of whatever the camera is currently looking at — the
    * screen centre converted back into world coordinates. */
   function handlePickNodeType(type: PlaceableNodeType, tiered: boolean): void {
@@ -571,6 +568,9 @@ export function Defend(): JSX.Element {
           <Link to="/" className="payload-defend-exit" data-testid="defend-exit">
             ← Keluar
           </Link>
+          <button type="button" className="payload-defend-test-btn" data-testid="defend-test" onPointerDown={(event) => event.stopPropagation()} onClick={handleTestDefense} disabled={isTesting}>
+            {isTesting ? "Menguji…" : "🧪 Uji pertahanan"}
+          </button>
           <span className="payload-defend-zoom" data-testid="defend-zoom-level">
             {Math.round(zoom * 100)}%
           </span>
@@ -592,6 +592,61 @@ export function Defend(): JSX.Element {
           ＋
         </button>
       </div>
+
+      {testReport && (
+        <div className="payload-modal-backdrop" data-testid="defend-test-backdrop" onClick={() => setTestReport(null)}>
+          <div className="payload-modal payload-modal--wide" role="dialog" aria-label="Hasil uji pertahanan" data-testid="defend-test-result" onClick={(event) => event.stopPropagation()}>
+            <h2>Uji Pertahanan</h2>
+
+            <p className={`payload-defend-verdict payload-defend-verdict--${testReport.verdict}`} data-testid="defend-test-verdict" data-verdict={testReport.verdict}>
+              {VERDICT_COPY[testReport.verdict]}
+            </p>
+
+            {/* The proof, not just the number: an actual battle from the run above, replayable
+            forever from its (ruleset, seed, virus) because the sim is deterministic. */}
+            <div className="payload-defend-showcase">
+              <p className="payload-defend-showcase-caption" data-testid="defend-test-showcase-caption">
+                {testReport.showcase.showcaseWon ? "Begini cara mereka masuk" : "Serangan yang paling nyaris"} — <strong>{testReport.showcase.virus.name}</strong>, seed {testReport.showcase.showcase.input.seed}, sisa Core{" "}
+                {Math.round(testReport.showcase.showcase.result.score.coreRatioPermille / 10)}%
+              </p>
+              <ReplayPlayer log={testReport.showcase.showcase} layout={replayLayoutFor(nodes, replaySize.width, replaySize.height)} width={replaySize.width} height={replaySize.height} />
+            </div>
+
+            <ul className="payload-defend-trials" data-testid="defend-test-trials">
+              {testReport.trials.map((trial) => (
+                <li key={trial.virus.id} data-testid="defend-test-trial" data-virus={trial.virus.id} data-wins={trial.wins}>
+                  <div className="payload-defend-trial-head">
+                    <strong>{trial.virus.name}</strong>
+                    <span className={trial.wins > 0 ? "payload-defend-trial-win" : "payload-defend-trial-loss"}>
+                      {trial.wins > 0 ? `tembus ${trial.wins}/${trial.runs}` : `gagal ${trial.runs}×`}
+                    </span>
+                  </div>
+                  <div className="payload-defend-trial-track">
+                    <span className="payload-defend-trial-fill" style={{ width: `${Math.round(trial.winrate * 100)}%`, background: trial.wins > 0 ? theme.faction.stealth : theme.faction.attack }} />
+                  </div>
+                  <small>{trial.virus.description}</small>
+                </li>
+              ))}
+            </ul>
+
+            {!testReport.validation.valid && (
+              <details className="payload-defend-structural" data-testid="defend-test-structural">
+                <summary>Catatan struktur ({testReport.validation.errors.length})</summary>
+                <ul>
+                  {testReport.validation.errors.map((error, index) => (
+                    <li key={index}>{error.message}</li>
+                  ))}
+                </ul>
+                <small>Aturan topologi @payload/sim — halaman ini sandbox, jadi ini catatan, bukan penghalang uji.</small>
+              </details>
+            )}
+
+            <button type="button" data-testid="defend-test-close" onClick={() => setTestReport(null)}>
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
 
       {isPickerOpen && (
         <div className="payload-modal-backdrop" data-testid="defend-picker-backdrop" onClick={() => setPickerOpen(false)}>

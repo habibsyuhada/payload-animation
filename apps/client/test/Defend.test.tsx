@@ -1,3 +1,4 @@
+import { EDGE_LENGTH_MIN_DU } from "@payload/sim";
 import { page } from "@vitest/browser/context";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
@@ -134,6 +135,46 @@ describe("Defend page", () => {
     expect(Math.abs(core.width - core.height)).toBeLessThan(1);
   });
 
+  it("tests the defense on demand and shows the verdict, every attacker's result, and a playable battle", async () => {
+    await page.getByTestId("defend-test").click();
+
+    const verdict = await findByTestId("defend-test-verdict");
+    // Entry + Core with nothing in between: every attacker strolls in.
+    expect(verdict.getAttribute("data-verdict")).toBe("too-easy");
+
+    const trials = page.getByTestId("defend-test-trial").elements();
+    expect(trials).toHaveLength(5);
+    expect(trials.every((trial) => Number(trial.getAttribute("data-wins")) > 0)).toBe(true);
+
+    // The showcase is a real battle rendered by the replay engine, not a still image.
+    const caption = await findByTestId("defend-test-showcase-caption");
+    expect(caption.textContent).toContain("seed");
+    expect(document.querySelector("[data-testid=defend-test-result] canvas")).not.toBeNull();
+
+    await page.getByTestId("defend-test-close").click();
+    await expectGone("defend-test-result");
+  });
+
+  it("calls out a defense nothing can breach", async () => {
+    // The ICE Nest composition from RULESET.md §9 — structurally fine, and unbeatable.
+    useDefendStore.setState({
+      nodes: [
+        { id: ENTRY_ID, type: "entry", x: -240, y: 0 },
+        { id: 10, type: "firewall", tier: 3, x: 0, y: 0 },
+        { id: 11, type: "ice-sentry", tier: 2, x: 0, y: -120 },
+        { id: 12, type: "ice-sentry", tier: 2, x: 0, y: 120 },
+        { id: CORE_ID, type: "core", x: 240, y: 0 },
+      ],
+    });
+
+    await page.getByTestId("defend-test").click();
+    const verdict = await findByTestId("defend-test-verdict");
+    expect(verdict.getAttribute("data-verdict")).toBe("impenetrable");
+    expect(verdict.textContent).toContain("ditolak");
+    // With no breach anywhere, the showcase is the closest failed attempt instead.
+    expect((await findByTestId("defend-test-showcase-caption")).textContent).toContain("nyaris");
+  });
+
   it("shows the selected node's link range as a ring, and only that node's", async () => {
     await findByTestId("defend-canvas");
     expect(page.getByTestId("defend-node-range").elements()).toHaveLength(0);
@@ -179,6 +220,28 @@ describe("Defend page", () => {
         throw new Error("connector has not come back");
       }
     });
+  });
+
+  it("spreads nodes added one after another instead of stacking them on the same spot", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await page.getByTestId("defend-add-node").click();
+      await findByTestId("defend-picker");
+      // Scoped to the picker: once a Router is on the map, its own label matches "Router" too.
+      (document.querySelector('[data-testid=defend-picker] [data-node-type=router]') as HTMLButtonElement).click();
+      await expectGone("defend-picker");
+    }
+    await vi.waitFor(() => {
+      if (page.getByTestId("defend-node").elements().length !== 5) {
+        throw new Error("not all three routers are in yet");
+      }
+    });
+
+    const placed = useDefendStore.getState().nodes;
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        expect(Math.hypot(placed[i]!.x - placed[j]!.x, placed[i]!.y - placed[j]!.y)).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("wires a newly added node to everything already in its range", async () => {
@@ -235,12 +298,19 @@ describe("Defend page", () => {
       }
     });
     expect(nodeGroup(ADDED_NODE_ID).getAttribute("data-node-type")).toBe("router");
-    // Centre of the screen in world coordinates, per the camera's own transform.
+    // Lands where the camera is looking — at the centre of the screen, or as close to it as the
+    // minimum placement gap allows when something is already sitting there (see freeSpotNear).
     const { zoom, offsetX, offsetY } = useDefendStore.getState();
     const rect = viewport().getBoundingClientRect();
     const added = nodePosition(ADDED_NODE_ID);
-    expect(added.x * zoom + offsetX).toBeCloseTo(rect.width / 2, 0);
-    expect(added.y * zoom + offsetY).toBeCloseTo(rect.height / 2, 0);
+    const screenX = added.x * zoom + offsetX;
+    const screenY = added.y * zoom + offsetY;
+    expect(Math.hypot(screenX - rect.width / 2, screenY - rect.height / 2)).toBeLessThanOrEqual(EDGE_LENGTH_MIN_DU * zoom + 1);
+    // Still comfortably on screen, so "it appeared where I was looking" holds either way.
+    expect(screenX).toBeGreaterThan(0);
+    expect(screenX).toBeLessThan(rect.width);
+    expect(screenY).toBeGreaterThan(0);
+    expect(screenY).toBeLessThan(rect.height);
     // Selected on arrival, so its action buttons — delete included — are already up.
     await findByTestId("defend-node-actions");
     await findByTestId("defend-action-remove");
