@@ -44,6 +44,19 @@ const HONEYPOT_FORK: DefenseGraph = {
   coreHp: 400,
 };
 
+/** Entry 1/2 -> Firewall III 3 -> Core 4. The counter-damage here outruns any repair. */
+const HARD_FIREWALL_LINE: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "entry"), node(3, "firewall", 3), node(4, "core")],
+  edges: [
+    { from: 1, to: 3, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 3, to: 4, lengthDu: 300 },
+  ],
+  entryNodeIds: [1, 2],
+  coreNodeId: 4,
+  coreHp: 600,
+};
+
 /** Entry 1/2 -> Router 3 -> Core 4. Nothing here can hurt the virus. */
 const QUIET_LINE: DefenseGraph = {
   nodes: [node(1, "entry"), node(2, "entry"), node(3, "router"), node(4, "core")],
@@ -265,6 +278,21 @@ describe("v2 mechanic changes (ADR 0006 §8)", () => {
     ]);
     expect(repairs(gated)).toBeGreaterThan(0);
     expect(repairs(gated)).toBeLessThan(repairs(ungated));
+  });
+});
+
+describe("death", () => {
+  it("stays dead once Integrity reaches 0 — an ungated Self Repair cannot resurrect it later in the same tick", () => {
+    // Pinned on a Firewall III, the counter-damage lands in step 4 and the repair in step 5,
+    // both before the end-of-tick death check. Without the latch this virus ping-pongs between 0
+    // and +heal forever and grinds the whole defense down (found by tools/balance-lab's dominance
+    // search, not by hand).
+    const log = battle([row({ actions: [{ kind: "self-repair", tier: 3 }, { kind: "move-toward-core" }] })], HARD_FIREWALL_LINE);
+    expect(log.result.winner).toBe("defender");
+    expect(log.events.some((event) => event.type === "virus-died")).toBe(true);
+    const death = log.events.find((event) => event.type === "virus-died")!;
+    // Nothing may follow the death but the death itself.
+    expect(log.events.filter((event) => event.type === "virus-repaired" && event.tick >= death.tick)).toHaveLength(0);
   });
 });
 

@@ -8,7 +8,8 @@
     "test": "vitest run",
     "lint": "eslint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "report": "pnpm build && node dist/cli.js"
+    "report": "pnpm build && node dist/cli.js",
+    "dominance": "pnpm build && node dist/dominance-cli.js"
   },
   "dependencies": {
     "@payload/sim": "workspace:*"

@@ -111,6 +111,14 @@ interface BattleStateV2 {
   firewallsDestroyed: number;
   damageTakenThisTick: number;
   damageTakenLastTick: number;
+  /**
+   * Latched the moment Integrity reaches 0. The death check only runs at the end of a tick, and
+   * Self Repair is no longer gated on "took no damage this tick" (ADR 0006 §8) — without this
+   * latch a repair later in the same tick would quietly resurrect a virus that was already dead,
+   * which no rule in RULESET §7/§11 allows. v1 never needed it because its hardcoded gate made
+   * the case unreachable.
+   */
+  died: boolean;
   cloakUntilTick: number;
   cloakReadyAtTick: number;
   readonly decoy: DecoyState;
@@ -377,6 +385,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     firewallsDestroyed: 0,
     damageTakenThisTick: 0,
     damageTakenLastTick: 0,
+    died: false,
     cloakUntilTick: 0,
     cloakReadyAtTick: 0,
     decoy: { activationsUsed: 0, absorbsRemaining: 0 },
@@ -405,6 +414,9 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     state.virusIntegrity = Math.max(0, state.virusIntegrity - amount);
     const dealt = before - state.virusIntegrity;
     state.damageTakenThisTick += dealt;
+    if (state.virusIntegrity <= 0) {
+      state.died = true;
+    }
     return dealt;
   }
 
@@ -429,7 +441,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         },
       };
     }
-    if (state.virusIntegrity <= 0) {
+    if (state.died || state.virusIntegrity <= 0) {
       events.push({ tick, type: "virus-died", actor: "virus" });
       return {
         input,
@@ -637,7 +649,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
 
     // --- 5. Utility ---
     const healAmount = plan.selfRepair.reduce((sum, contribution) => sum + contribution.amount, 0);
-    if (healAmount > 0) {
+    if (healAmount > 0 && !state.died) {
       const before = state.virusIntegrity;
       state.virusIntegrity = Math.min(VIRUS_START_INTEGRITY, state.virusIntegrity + healAmount);
       if (state.virusIntegrity > before) {

@@ -28,7 +28,7 @@ export function renderMarkdownReport(
   };
 
   const lines: string[] = [];
-  lines.push("# Balance Lab — winrate report (ruleset v1)");
+  lines.push("# Balance Lab — winrate report (ruleset v2)");
   lines.push("");
   lines.push(`${virusArchetypes.length} virus archetype x ${defenseArchetypes.length} defense archetype, ${sampleSize} seeds per matchup.`);
   lines.push(`Attacker winrate shown; flagged (**bold**) if outside [${formatPercent(WINRATE_FLOOR)}, ${formatPercent(WINRATE_CEILING)}] — PLAN.md's S1.7 bar.`);

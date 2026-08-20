@@ -485,3 +485,31 @@ Payload budget & Defense budget per account tier sama persis dengan §1. Tambaha
 payload, threshold di luar 0–1000‰. Ia **memperingatkan tapi tidak menolak**: sheet kosong, sheet
 tanpa satu pun aksi gerak (legal — virusnya diam di Entry sampai timeout), dan baris yang tidak
 punya kondisi, aksi, maupun anak.
+
+## 13. Temuan `tools/balance-lab` untuk v2 (V7.4)
+
+`pnpm --filter @payload/balance-lab report` menjalankan dua hal sekarang: matriks 5 arketipe virus
+× 4 arketipe defense seperti dulu (200 seed per matchup), **plus** pencarian dominasi — 40 sheet
+acak hasil generator berbenih (`sheet-generator.ts`) ditambah kelima arketipe tangan, semuanya
+dilawankan ke tiap defense. Laporan lengkap: `tools/balance-lab/REPORT.md`.
+
+"Dominan" sengaja didefinisikan sempit: build yang mengalahkan **semua** lawan yang ia temui —
+virus di atas 75% lawan tiap defense, atau defense yang menahan tiap penyerang di bawah 25%. Itu
+bukan matchup sulit, itu ketiadaan matchup, dan itu yang dilanggar GDD §2.
+
+- [x] **Bug engine yang ditemukan pencarian ini, bukan oleh tangan**: karena Self Repair v2 tidak
+  lagi punya gerbang "tidak kena damage tick ini" (§10.2), heal di langkah 5 bisa menghidupkan
+  kembali virus yang Integrity-nya sudah 0 di langkah 4 — cek kematian baru jalan di langkah 7.
+  Akibatnya virus tanpa satu pun aksi serang menggerogoti seluruh pertahanan sambil terus-menerus
+  mati-dan-hidup di angka 0. Diperbaiki dengan mengunci kematian begitu Integrity menyentuh 0
+  (`engine-v2.ts`, `state.died`), sesuai §7/§11 langkah 7 yang memang tidak mengenal kebangkitan.
+  v1 tidak pernah bisa kena ini: gerbangnya membuat kasusnya tak terjangkau.
+- [ ] **"ICE Nest" masih dominan di v2.** Dua ICE Sentry II yang radiusnya menumpuk di satu
+  chokepoint menahan **setiap** sheet acak di ≤7.5% winrate. Ini persis temuan §9 yang belum
+  diputuskan, dan Cloak berbasis tick (§10.4) — salah satu kandidat perbaikannya — terbukti tidak
+  cukup sendirian. Tercatat di `tools/balance-lab/src/known-dominance.ts` sebagai utang yang
+  diketahui: job CI `balance-dominance` **tidak** gagal karenanya, tapi gagal untuk temuan baru
+  apa pun. Mengosongkan file itu adalah syarat rilis v2 ke pemain (PLAN.md V7.4).
+- [ ] Sebagian besar matchup arketipe masih di luar pita [25%, 75%], sama seperti v1 (§9). Angka
+  v2 mendekati profil v1 setelah perbaikan di atas — yang berarti event sheet tidak diam-diam
+  mengubah keseimbangan, ia mengubah cara menulisnya. Kalibrasi pita itu tetap pekerjaan terpisah.
