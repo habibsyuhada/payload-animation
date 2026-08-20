@@ -9,7 +9,9 @@ import { Screen } from "./Screen.js";
 const ACCOUNT_TIER = 1;
 const TIER_CONFIG = getAccountTierConfig(RULESET_V1, ACCOUNT_TIER);
 const TIER_OPTIONS: readonly BlockTier[] = [1, 2, 3];
-const DRAG_THRESHOLD_PX = 4;
+/** Raw CSS-pixel movement (never scaled by zoom/viewBox ratio — see handlePointerMove) below which
+ * a press-and-release still counts as a tap, not a drag. */
+const DRAG_THRESHOLD_PX = 6;
 const VIEWBOX_WIDTH = 560;
 const VIEWBOX_HEIGHT = 500;
 /** Converts a wheel `deltaY` into a multiplicative zoom step: negative deltaY (scroll/pinch out)
@@ -271,22 +273,32 @@ export function DefenseGrid(): JSX.Element {
     if (drag) {
       const node = nodes.find((candidate) => candidate.id === drag.id);
       if (!node || node.fixed) return;
-      const { x: dx, y: dy } = clientDeltaToSvgUnits(event.clientX - drag.pointerStartX, event.clientY - drag.pointerStartY);
-      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+      const rawDx = event.clientX - drag.pointerStartX;
+      const rawDy = event.clientY - drag.pointerStartY;
+      // The tap-vs-drag call is made on *raw* client pixels, not world units — world units get
+      // scaled by VIEWBOX_WIDTH/rect.width (and zoom), which on the full-bleed canvas is often
+      // well above 1 on a narrow phone (a ~390px-wide viewport against a 560-unit viewBox), so a
+      // couple of pixels of ordinary finger/mouse jitter was enough to cross DRAG_THRESHOLD_PX in
+      // world units — misreading nearly every real tap as a drag, nudging the node by a pixel or
+      // two and (see handleNodePointerUp) silently skipping the tap-to-select detail card.
+      if (!drag.moved && Math.hypot(rawDx, rawDy) < DRAG_THRESHOLD_PX) {
         return;
       }
       drag.moved = true;
+      const { x: dx, y: dy } = clientDeltaToSvgUnits(rawDx, rawDy);
       moveNode(drag.id, Math.round(drag.nodeStartX + dx), Math.round(drag.nodeStartY + dy));
       return;
     }
 
     const pan = panDragRef.current;
     if (!pan) return;
-    const { x: dx, y: dy } = clientDeltaToSvgUnits(event.clientX - pan.startClientX, event.clientY - pan.startClientY);
-    if (!pan.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+    const rawDx = event.clientX - pan.startClientX;
+    const rawDy = event.clientY - pan.startClientY;
+    if (!pan.moved && Math.hypot(rawDx, rawDy) < DRAG_THRESHOLD_PX) {
       return;
     }
     pan.moved = true;
+    const { x: dx, y: dy } = clientDeltaToSvgUnits(rawDx, rawDy);
     // Grab-and-drag semantics (like dragging a node): moving the pointer right should reveal
     // content that was off-screen to the left, so the camera itself moves left — pan decreases.
     setPan(pan.startPanX - dx, pan.startPanY - dy);

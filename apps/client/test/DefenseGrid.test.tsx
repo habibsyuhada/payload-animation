@@ -110,6 +110,18 @@ function tapNode(id: number): void {
   group.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 1, clientY: 1, pointerId: 1 }));
 }
 
+/** A tap with a couple of pixels of incidental wobble between press and release, same as a real
+ * finger or mouse produces — must still count as a tap (see DRAG_THRESHOLD_PX's comment in
+ * DefenseGrid.tsx), not a drag. */
+function tapNodeWithJitter(id: number, jitterPx: number): void {
+  const group = nodeGroup(id);
+  const startX = 100;
+  const startY = 100;
+  group.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: startX, clientY: startY, pointerId: 3 }));
+  document.querySelector("[data-testid=grid-canvas]")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: startX + jitterPx, clientY: startY, pointerId: 3 }));
+  group.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: startX + jitterPx, clientY: startY, pointerId: 3 }));
+}
+
 function dragNode(id: number, dxClient: number, dyClient: number): void {
   const group = nodeGroup(id);
   const startX = 100;
@@ -238,6 +250,17 @@ describe("DefenseGrid", () => {
         throw new Error("detail card is still open");
       }
     });
+  });
+
+  it("still shows the detail card despite a couple of pixels of jitter between press and release", async () => {
+    await armNodeViaModal("Firewall");
+    clickCanvasAt(260, 250);
+    await waitForNodeCount(4);
+    await page.getByTestId("tool-hand").click();
+
+    tapNodeWithJitter(4, 3); // below DRAG_THRESHOLD_PX (6) — ordinary finger/mouse wobble
+    const detail = await findByTestId("node-detail");
+    expect(detail.textContent).toContain("Firewall");
   });
 
   it("closes an open node detail card when tapping empty background", async () => {
