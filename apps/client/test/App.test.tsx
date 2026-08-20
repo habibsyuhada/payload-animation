@@ -32,16 +32,25 @@ async function findByTestId(testId: string): Promise<Element> {
   });
 }
 
-const SCREENS: readonly { label: string; title: string; fullBleed?: boolean }[] = [
+/**
+ * Nav labels are shorter than screen titles ("Lab", "Riset", "Liga"): seven of them share a 390px
+ * bar, and a label that wraps makes the whole bar taller than its neighbours.
+ *
+ * `showsOwnTitle: false` is only for Defend, which brings its own full-screen shell instead of
+ * going through `Screen` and so renders no heading of its own. Every other screen repeats its
+ * title in the body via `Screen`'s <h1>. The header assertion below applies to all of them.
+ */
+const SCREENS: readonly { label: string; title: string; testId?: string; showsOwnTitle?: boolean }[] = [
   { label: "HQ", title: "HQ / Home" },
-  { label: "Virus Lab", title: "Virus Lab" },
-  // Defense Grid is a full-bleed canvas editor (toolbar + HUD, no <h1> — see Screen's fullBleed
-  // prop): the app header still carries its title, but its own body text no longer does.
-  { label: "Defense", title: "Defense Grid", fullBleed: true },
+  { label: "Lab", title: "Virus Lab" },
+  // "Defense" is the full-screen Defend page, which replaced the old Defense Grid editor. It
+  // renders its own fixed-position shell rather than going through `Screen`, so it has its own
+  // test id and no visible heading of its own — but it still registers its title with the shell.
+  { label: "Defense", title: "Defense", testId: "defend-page", showsOwnTitle: false },
   { label: "Scan", title: "Scan / Attack" },
   { label: "Replay", title: "Replay Player" },
-  { label: "Research", title: "Research" },
-  { label: "League", title: "League" },
+  { label: "Riset", title: "Research" },
+  { label: "Liga", title: "League" },
 ];
 
 describe("App navigation", () => {
@@ -60,8 +69,8 @@ describe("App navigation", () => {
     it(`navigates to the ${target.title} screen and updates the header`, async () => {
       await findByTestId("app-header");
       await page.getByRole("link", { name: target.label }).click();
-      const screen = await findByTestId(`screen-${target.title}`);
-      if (!target.fullBleed) {
+      const screen = await findByTestId(target.testId ?? `screen-${target.title}`);
+      if (target.showsOwnTitle !== false) {
         expect(screen.textContent).toContain(target.title);
       }
       const header = await findByTestId("app-header");
@@ -71,10 +80,10 @@ describe("App navigation", () => {
 
   it("marks only the active screen's nav link as active", async () => {
     await findByTestId("app-header");
-    await page.getByRole("link", { name: "Research" }).click();
+    await page.getByRole("link", { name: "Riset" }).click();
     await findByTestId("screen-Research");
     const activeLinks = page.getByTestId("app-header").element().ownerDocument.querySelectorAll(".payload-nav-link.active");
     expect(activeLinks).toHaveLength(1);
-    expect(activeLinks[0]!.textContent).toBe("Research");
+    expect(activeLinks[0]!.textContent).toBe("Riset");
   });
 });

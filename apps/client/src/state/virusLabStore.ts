@@ -1,5 +1,7 @@
 import { MAX_SHEET_DEPTH_V2, type ActionKind, type BlockTier, type ConditionKind, type DefenseNodeType, type OnceScope, type SheetEvent, type VirusProgram } from "@payload/sim";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { highestIdSuffix, persistStorage, storageKey } from "./localPersist.js";
 import { conditionIsTiered } from "../data/sheetCatalog.js";
 
 /**
@@ -13,6 +15,9 @@ import { conditionIsTiered } from "../data/sheetCatalog.js";
  *
  * v1's drag-to-reorder chain does not survive (ADR 0006 §9): everything here is tap-driven, and
  * order is changed with explicit up/down buttons that work the same under a thumb.
+ *
+ * The sheet is persisted to the device (localPersist.ts): a virus somebody spent ten minutes
+ * writing has to still be there after a refresh.
  */
 
 export interface ConditionInstance {
@@ -58,6 +63,11 @@ let nextInstanceId = 0;
 function newInstanceId(prefix: string): string {
   nextInstanceId += 1;
   return `${prefix}-${nextInstanceId}`;
+}
+
+/** See localPersist.ts: a restored sheet's ids must not be handed out a second time. */
+function adoptRestoredIds(rows: readonly RowInstance[]): void {
+  nextInstanceId = Math.max(nextInstanceId, highestIdSuffix(allInstanceIds(rows)));
 }
 
 export function newRow(partial: Partial<Omit<RowInstance, "id">> = {}): RowInstance {
@@ -137,51 +147,77 @@ function addRowUnder(rows: readonly RowInstance[], parentId: string): RowInstanc
   return mapRow(rows, parentId, (row) => ({ ...row, children: [...row.children, newRow()] }));
 }
 
-export const useVirusLabStore = create<VirusLabState>((set) => ({
-  rows: starterSheet(),
+/** Every instance id in a sheet, so a restored sheet can push the id counter past all of them. */
+function allInstanceIds(rows: readonly RowInstance[]): string[] {
+  return rows.flatMap((row) => [row.id, ...row.conditions.map((condition) => condition.id), ...row.actions.map((action) => action.id), ...allInstanceIds(row.children)]);
+}
 
-  addRow: (parentId) =>
-    set((state) => {
-      if (parentId === null) {
-        return { rows: [...state.rows, newRow()] };
-      }
-      if (!canNestUnder(state.rows, parentId)) {
-        return state;
-      }
-      return { rows: addRowUnder(state.rows, parentId) };
+export const useVirusLabStore = create<VirusLabState>()(
+  persist(
+    (set) => ({
+      rows: starterSheet(),
+
+      addRow: (parentId) =>
+        set((state) => {
+          if (parentId === null) {
+            return { rows: [...state.rows, newRow()] };
+          }
+          if (!canNestUnder(state.rows, parentId)) {
+            return state;
+          }
+          return { rows: addRowUnder(state.rows, parentId) };
+        }),
+
+      removeRow: (rowId) => set((state) => ({ rows: removeRowFrom(state.rows, rowId) })),
+
+      moveRow: (rowId, direction) => set((state) => ({ rows: moveRowIn(state.rows, rowId, direction) })),
+
+      setRowOnce: (rowId, once) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, once })) })),
+
+      addCondition: (rowId, kind) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, conditions: [...row.conditions, newCondition(kind)] })) })),
+
+      removeCondition: (rowId, conditionId) =>
+        set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, conditions: row.conditions.filter((condition) => condition.id !== conditionId) })) })),
+
+      updateCondition: (rowId, conditionId, patch) =>
+        set((state) => ({
+          rows: mapRow(state.rows, rowId, (row) => ({
+            ...row,
+            conditions: row.conditions.map((condition) => (condition.id === conditionId ? { ...condition, ...patch } : condition)),
+          })),
+        })),
+
+      addAction: (rowId, kind) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: [...row.actions, newAction(kind)] })) })),
+
+      removeAction: (rowId, actionId) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: row.actions.filter((action) => action.id !== actionId) })) })),
+
+      moveAction: (rowId, actionId, direction) =>
+        set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: moveWithinSiblings(row.actions, actionId, direction) ?? row.actions })) })),
+
+      setActionTier: (rowId, actionId, tier) =>
+        set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: row.actions.map((action) => (action.id === actionId ? { ...action, tier } : action)) })) })),
+
+      reset: () => set({ rows: starterSheet() }),
     }),
-
-  removeRow: (rowId) => set((state) => ({ rows: removeRowFrom(state.rows, rowId) })),
-
-  moveRow: (rowId, direction) => set((state) => ({ rows: moveRowIn(state.rows, rowId, direction) })),
-
-  setRowOnce: (rowId, once) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, once })) })),
-
-  addCondition: (rowId, kind) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, conditions: [...row.conditions, newCondition(kind)] })) })),
-
-  removeCondition: (rowId, conditionId) =>
-    set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, conditions: row.conditions.filter((condition) => condition.id !== conditionId) })) })),
-
-  updateCondition: (rowId, conditionId, patch) =>
-    set((state) => ({
-      rows: mapRow(state.rows, rowId, (row) => ({
-        ...row,
-        conditions: row.conditions.map((condition) => (condition.id === conditionId ? { ...condition, ...patch } : condition)),
-      })),
-    })),
-
-  addAction: (rowId, kind) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: [...row.actions, newAction(kind)] })) })),
-
-  removeAction: (rowId, actionId) => set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: row.actions.filter((action) => action.id !== actionId) })) })),
-
-  moveAction: (rowId, actionId, direction) =>
-    set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: moveWithinSiblings(row.actions, actionId, direction) ?? row.actions })) })),
-
-  setActionTier: (rowId, actionId, tier) =>
-    set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: row.actions.map((action) => (action.id === actionId ? { ...action, tier } : action)) })) })),
-
-  reset: () => set({ rows: starterSheet() }),
-}));
+    {
+      name: storageKey("virus-lab"),
+      version: 1,
+      storage: persistStorage,
+      /** Nothing to migrate from yet. When the row shape changes, the real conversion goes here —
+       * falling back to the starter sheet is the safety net for a version we cannot read, which
+       * beats rehydrating a shape the editor will crash on. */
+      migrate: () => ({ rows: starterSheet() }),
+      /** Only the authored sheet. The actions are rebuilt on every load, and persisting them
+       * would serialise functions to `null` and quietly break the store on the next launch. */
+      partialize: (state) => ({ rows: state.rows }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          adoptRestoredIds(state.rows);
+        }
+      },
+    },
+  ),
+);
 
 function toSheetCondition(condition: ConditionInstance): SheetEvent["conditions"][number] {
   return {

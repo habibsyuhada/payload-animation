@@ -5,6 +5,7 @@ import { NodeGlyph } from "../components/NodeGlyph.js";
 import { findActionEntry, findConditionEntry } from "../data/sheetCatalog.js";
 import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
 import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
+import { useAppShellStore } from "../state/appShellStore.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -356,6 +357,14 @@ export function Defend(): JSX.Element {
     frameId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frameId);
   }, [isPlaying, playbackDuration, playbackSpeed]);
+
+  /* Defend covers the header and nav entirely (it is `position: fixed`), so the title it
+   * registers is never visible behind it. It registers anyway because it is a nav destination
+   * now: the shell's header has to be showing the right screen the moment the page is closed. */
+  const setActiveScreenTitle = useAppShellStore((state) => state.setActiveScreenTitle);
+  useEffect(() => {
+    setActiveScreenTitle("Defense");
+  }, [setActiveScreenTitle]);
 
   useEffect(() => {
     const wrap = wrapRef.current;

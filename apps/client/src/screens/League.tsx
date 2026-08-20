@@ -1,9 +1,13 @@
+import { NotBuiltYet } from "./NotBuiltYet.js";
 import { Screen } from "./Screen.js";
 
 export function League(): JSX.Element {
   return (
     <Screen title="League">
-      <p>Papan peringkat &amp; riwayat musim. (GDD §12.7 / PLAN.md Fase 5 — belum diimplementasikan.)</p>
+      <NotBuiltYet blockedBy="rating & musim di server" reference="GDD §12.7 / PLAN.md Fase 5">
+        Papan peringkat dan riwayat musim. Ini bagian yang paling butuh server: peringkat cuma ada
+        artinya kalau dibanding pemain lain.
+      </NotBuiltYet>
     </Screen>
   );
 }

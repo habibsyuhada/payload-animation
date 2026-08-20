@@ -2,7 +2,6 @@ import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { useAppShellStore } from "./state/appShellStore.js";
 import { Home } from "./screens/Home.js";
 import { VirusLab } from "./screens/VirusLab.js";
-import { DefenseGrid } from "./screens/DefenseGrid.js";
 import { Scan } from "./screens/Scan.js";
 import { Replay } from "./screens/Replay.js";
 import { Research } from "./screens/Research.js";
@@ -14,26 +13,27 @@ import { Defend } from "./screens/Defend.js";
  * The 7 screens (GDD §12), route paths, and short nav labels. `HashRouter` (not `BrowserRouter`)
  * because C3.5 wraps this in Capacitor, which serves the app from a local file:// origin with no
  * real HTTP server to resolve deep-linked paths — a hash route always resolves locally.
+ *
+ * "Defense" is the full-screen Defend page. It replaced the earlier Defense Grid editor outright
+ * rather than living beside it: the two were two ways to draw the same graph, and keeping both
+ * meant two topology editors to maintain, two sets of camera bugs, and a player having to guess
+ * which one their layout lived in. Defend won because it is the one that can *test* a layout.
  */
 const NAV_ITEMS = [
   { path: "/", label: "HQ", element: <Home /> },
-  { path: "/virus-lab", label: "Virus Lab", element: <VirusLab /> },
-  { path: "/defense-grid", label: "Defense", element: <DefenseGrid /> },
+  { path: "/virus-lab", label: "Lab", element: <VirusLab /> },
+  { path: "/defend", label: "Defense", element: <Defend /> },
   { path: "/scan", label: "Scan", element: <Scan /> },
   { path: "/replay", label: "Replay", element: <Replay /> },
-  { path: "/research", label: "Research", element: <Research /> },
-  { path: "/league", label: "League", element: <League /> },
+  { path: "/research", label: "Riset", element: <Research /> },
+  { path: "/league", label: "Liga", element: <League /> },
 ] as const;
 
 /**
  * Routes that deliberately stay out of the bottom nav: Onboarding (C3.4) is a one-time flow
- * launched from Home, and Defend is a full-screen editor that covers the header and nav entirely
- * (it carries its own "← Keluar" link back to HQ).
+ * launched from Home.
  */
-const EXTRA_ROUTES = [
-  { path: "/onboarding", element: <Onboarding /> },
-  { path: "/defend", element: <Defend /> },
-] as const;
+const EXTRA_ROUTES = [{ path: "/onboarding", element: <Onboarding /> }] as const;
 
 function AppShell(): JSX.Element {
   const activeScreenTitle = useAppShellStore((state) => state.activeScreenTitle);

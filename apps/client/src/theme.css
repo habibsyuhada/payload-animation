@@ -25,6 +25,29 @@ body {
   height: 100%;
 }
 
+/* App header. Small and quiet on purpose — it is a "where am I" label above a screen that owns
+ * the rest of the space, not a title bar competing with the screen's own heading. */
+.payload-app > header {
+  padding: 0.55rem 1rem;
+  background: var(--color-background-panel);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* Links inherit the theme instead of the browser's blue-underline default, which read as broken
+ * against a near-black palette. */
+.payload-app-content a {
+  color: var(--color-faction-movement);
+  text-decoration: none;
+}
+
+.payload-app-content a:hover {
+  text-decoration: underline;
+}
+
 .payload-app-content {
   flex: 1;
   overflow-y: auto;
@@ -41,9 +64,12 @@ body {
 
 .payload-nav-link {
   flex: 1;
-  padding: 0.6rem 0.25rem;
+  padding: 0.6rem 0.15rem;
   text-align: center;
-  font-size: 0.7rem;
+  /* One line, always: a wrapped label makes the bar taller than its neighbours and the whole row
+   * jitters as you move between screens. Labels are kept short enough to fit seven across 390px. */
+  font-size: 0.68rem;
+  white-space: nowrap;
   color: var(--color-text-muted);
   text-decoration: none;
   border-top: 2px solid transparent;
@@ -56,6 +82,82 @@ body {
 
 .payload-screen h1 {
   margin-top: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+/* --- Shared card, used by HQ's summaries and by the not-built-yet screens ----------------- */
+
+.payload-card {
+  display: block;
+  background: var(--color-background-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  margin: 0 0 0.7rem;
+  color: inherit;
+}
+
+.payload-card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.payload-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* A card that is itself a link (HQ's summaries) — the whole surface is the tap target. */
+a.payload-card {
+  text-decoration: none;
+}
+
+a.payload-card:hover {
+  border-color: var(--color-faction-movement);
+  text-decoration: none;
+}
+
+/* The headline number on an HQ summary: the one thing worth reading at arm's length. */
+.payload-card-stat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.payload-card-stat strong {
+  font-size: 1.15rem;
+  color: var(--color-text);
+}
+
+.payload-card-note {
+  margin-top: 0.55rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Screens whose feature is not built yet. They look deliberate rather than broken: what it will
+ * be, and what it is waiting on. */
+.payload-soon {
+  border-style: dashed;
+}
+
+.payload-soon-tag {
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
 }
 
 .payload-screen-body {

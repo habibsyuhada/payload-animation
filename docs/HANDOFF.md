@@ -22,6 +22,8 @@ Yang ada sekarang:
   `state/virusLabStore.ts` + `data/sheetCatalog.ts`). Tidak ada drag sama sekali; picker `+ kondisi`
   / `+ aksi` meniru modal "Pilih Node" halaman Defend; nesting maksimum 3 level, tombol anaknya
   di-disable di level terdalam. Sudah dicek manual di viewport 390×844.
+- **Defense Grid dihapus**, diganti halaman Defend: keduanya menggambar graf yang sama, dan Defend
+  yang bisa **menguji** hasilnya. Nav "Defense" sekarang langsung ke sana.
 - **Gauntlet Defend jalan di v2**, dan chip loadout berubah jadi **chip aturan yang menyala** saat
   aturannya menembak selama replay diputar (`ruleFirings` di `packages/replay/src/compile.ts` →
   `firedRuleIds` di `logic/attackPlayback.ts` → `data-firing` di Defend).
@@ -55,14 +57,27 @@ setelah perbaikan kematian di §13, artinya event sheet tidak diam-diam menggese
 `tools/balance-lab/REPORT.md` selalu terbaru; regenerasi dengan `node dist/cli.js > REPORT.md`
 setelah `pnpm --filter @payload/balance-lab build`.
 
-### (c) Persistensi — utang lama yang belum tersentuh
+### (c) Offline-first — langkah 1 sudah jalan, sisanya belum
 
-Masih persis seperti handoff sebelumnya: **halaman Defend maupun Virus Lab tidak menyimpan apa pun,
-refresh = hilang.** Belum ada konversi resmi `DefenseGraph` untuk server. Ini yang paling terasa
-begitu ada orang lain mencoba aplikasinya.
+**Sudah:** sheet Virus Lab dan layout Defend tersimpan ke `localStorage`
+(`state/localPersist.ts`), bertahan lewat refresh, dan HQ meringkas keduanya. Yang disimpan cuma
+**input** yang ditulis pemain — bukan `BattleLog`, karena log bisa dihitung ulang persis dari
+`(rulesetVersion, seed, virus, defense)`.
+
+**Belum:**
+
+- **PWA / service worker** — build web belum bisa dibuka tanpa jaringan. Tidak ada satu pun
+  panggilan jaringan di klien (sim & replay jalan di browser), jadi ini murni soal caching app
+  shell: `vite-plugin-pwa` + manifest sudah cukup.
+- **Lawan offline** — `tools/seed-defenses` masih satu baris. 200 pertahanan AI yang di-bundle
+  sebagai data statis akan menutup gameplay loop tanpa server sama sekali (lihat layar Scan).
+- **Riwayat battle** — layar Replay masih kosong karena tidak ada battle tersimpan untuk dibuka.
+- **Sinkronisasi opsional** — kalau server datang nanti, klien tidak perlu berubah: kirim
+  `(seed, virus, defense)`, server verifikasi hash lognya (PLAN.md B4.2 sudah menyebut ini).
 
 Utang halaman Defend lain yang masih berlaku:
 
+- Belum ada konversi resmi `DefenseGraph` untuk server.
 - Graf yang dihasilkan belum lolos `validateDefenseGraph` (halaman ini punya 1 Entry, ruleset minta
   2). Sengaja: sandbox, catatan strukturnya info, bukan penghalang.
 - Node pertahanan gampang jadi hiasan: selama Entry masih dalam jangkauan Core, virus lewat "jalan
@@ -87,6 +102,9 @@ packages/sim/src/
 packages/replay/src/
   compile.ts         BattleLog -> Timeline; sekarang plus ruleFirings + rulesFiringAt()
 apps/client/src/
+  screens/Home.tsx       HQ: ringkasan virus & pertahanan tersimpan
+  screens/NotBuiltYet.tsx kartu untuk 4 layar yang fiturnya belum ada
+  state/localPersist.ts  satu-satunya tempat aplikasi ini menulis ke perangkat
   screens/VirusLab.tsx   editor event sheet tap-driven (V7.3)
   state/virusLabStore.ts pohon baris yang bisa diedit; toVirusProgram() melepas id editor
   data/sheetCatalog.ts   label/warna kondisi & aksi — TIDAK menyalin satu bobot pun dari sim
@@ -107,7 +125,7 @@ docs/RULESET.md      §0–§9 v1 (beku), §10–§13 v2
 pnpm lint && pnpm typecheck && pnpm build          # semua hijau saat handoff ini ditulis
 
 # semua test butuh Chromium; di sandbox ini path-nya harus disebut eksplisit
-PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 391 test hijau
+PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 388 test hijau
 
 pnpm --filter @payload/balance-lab dominance       # cek dominasi (~1 menit), ini yang di CI
 pnpm --filter @payload/balance-lab report          # laporan lengkap; exit 1 selama masih ada
@@ -151,6 +169,14 @@ Nomor 1–10 dari handoff sebelumnya masih berlaku semua; yang di bawah ini tamb
 14. **`payload-sheet-*` di layar 390px**: keyword, chip, dan tombol `+` **menumpuk vertikal**, tidak
     berbagi satu baris. Versi pertama membaginya jadi tiga kolom dan setiap label chip pecah
     di tengah kata ("Node saat / ini ="). Kalau menambah kontrol ke dalam chip, cek ulang di 390px.
+15. **Counter id instance itu module-level, dan persistensi membangunkannya.** `nextNodeId` /
+    `nextInstanceId` mulai dari angka tetap tiap page load. Memulihkan layout yang node-nya 3..9
+    tanpa menaikkan counter membuat node berikutnya ber-id 3 lagi — dua node satu id. Bugnya cuma
+    muncul **setelah reload**, jadi `onRehydrateStorage` di kedua store wajib memanggil
+    `adoptRestoredIds`.
+16. **Kamera Defend sengaja TIDAK disimpan.** Halaman itu mem-frame seluruh graf pada layout
+    pertama; zoom/pan yang dipulihkan akan berkelahi dengan itu dan bisa membuka ke ruang kosong
+    di sebelah layout yang barusan disimpan.
 
 ## 6. Konteks angka yang sering dipakai
 
