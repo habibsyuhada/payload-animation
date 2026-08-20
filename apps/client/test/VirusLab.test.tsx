@@ -31,6 +31,14 @@ async function findByTestId(testId: string): Promise<Element> {
   });
 }
 
+/** A synthetic DataTransfer stays in read/write mode (unlike a real user-initiated drag's, which
+ * only exposes getData() during "drop"/"dragend"), so reusing the same instance across dragstart →
+ * dragover → drop below correctly round-trips the palette block's kind through the chain-builder's
+ * and chain-row's onDrop handlers, exactly like a real drag would. */
+function fireDrag(element: Element, type: string, dataTransfer: DataTransfer): void {
+  element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+}
+
 describe("VirusLab", () => {
   it("defaults to Shortest Path and shows its weight against the account-tier-1 budget", async () => {
     const budgetText = await findByTestId("budget-text");
@@ -126,6 +134,50 @@ describe("VirusLab", () => {
     expect(budgetText.textContent).toContain("melebihi budget");
     const runButton = (await findByTestId("run-dry-simulation")) as HTMLButtonElement;
     expect(runButton.disabled).toBe(true);
+  });
+
+  it("adds a block by dragging it from the palette and dropping it in the chain builder", async () => {
+    await findByTestId("budget-text");
+    const paletteButton = page.getByText("+ Scan Ahead").element();
+    const chainBuilder = (await findByTestId("chain-builder")) as HTMLElement;
+
+    const dataTransfer = new DataTransfer();
+    fireDrag(paletteButton, "dragstart", dataTransfer);
+    fireDrag(chainBuilder, "dragover", dataTransfer);
+    fireDrag(chainBuilder, "drop", dataTransfer);
+
+    const rows = await vi.waitFor(() => {
+      const found = page.getByTestId("chain-row").elements();
+      if (found.length === 0) {
+        throw new Error("no chain row yet");
+      }
+      return found;
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toContain("Scan Ahead");
+  });
+
+  it("drops a dragged palette block onto an existing row to insert it before that row", async () => {
+    await page.getByText("+ Detect Honeypot").click();
+    await findByTestId("chain-row");
+
+    const paletteButton = page.getByText("+ Scan Ahead").element();
+    const existingRow = page.getByTestId("chain-row").elements()[0]!;
+
+    const dataTransfer = new DataTransfer();
+    fireDrag(paletteButton, "dragstart", dataTransfer);
+    fireDrag(existingRow, "dragover", dataTransfer);
+    fireDrag(existingRow, "drop", dataTransfer);
+
+    const rows = await vi.waitFor(() => {
+      const found = page.getByTestId("chain-row").elements();
+      if (found.length !== 2) {
+        throw new Error("expected 2 chain rows");
+      }
+      return found;
+    });
+    expect(rows[0]!.textContent).toContain("Scan Ahead");
+    expect(rows[1]!.textContent).toContain("Detect Honeypot");
   });
 
   it("runs the dry simulation against all 3 practice defenses and shows a result for each", async () => {

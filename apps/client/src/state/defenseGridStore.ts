@@ -27,20 +27,35 @@ const INITIAL_NODES: readonly GridNode[] = [
   { id: ENTRY_2_ID, type: "entry", x: 40, y: 400, fixed: true },
 ];
 
+/** Which mouse/touch gesture on the canvas means right now — like a drawing app's toolbar: "Hand"
+ * pans the camera and drags existing nodes around, "Line" taps two nodes to link/unlink an edge,
+ * "Node" (armed via the node-picker modal, see pendingPlacementType) taps the grid to stamp down
+ * a new node of the chosen type. */
+export type GridTool = "hand" | "line" | "node";
+
 export interface DefenseGridState {
   readonly nodes: readonly GridNode[];
   readonly edges: readonly GridEdge[];
+  readonly activeTool: GridTool;
   readonly pendingPlacementType: Exclude<DefenseNodeType, "entry" | "core"> | null;
   readonly pendingPlacementTier: BlockTier;
   readonly selectedForEdgeId: number | null;
   readonly zoom: number;
-  readonly setPendingPlacement: (type: Exclude<DefenseNodeType, "entry" | "core"> | null) => void;
+  /** World-space point (in the same DU coordinate space as node x/y) that the canvas's top-left
+   * corner is currently showing — i.e. the camera's position. Panning the canvas moves this;
+   * zooming does not. */
+  readonly panX: number;
+  readonly panY: number;
+  readonly setActiveTool: (tool: Exclude<GridTool, "node">) => void;
+  readonly armNodeType: (type: Exclude<DefenseNodeType, "entry" | "core">) => void;
   readonly setPendingPlacementTier: (tier: BlockTier) => void;
   readonly placeNodeAt: (x: number, y: number) => void;
   readonly moveNode: (id: number, x: number, y: number) => void;
   readonly removeNode: (id: number) => void;
   readonly tapNodeForEdge: (id: number) => void;
+  readonly removeEdge: (from: number, to: number) => void;
   readonly setZoom: (zoom: number) => void;
+  readonly setPan: (x: number, y: number) => void;
   readonly reset: () => void;
 }
 
@@ -49,14 +64,27 @@ let nextPlaceableId = FIRST_PLACEABLE_ID;
 export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
   nodes: INITIAL_NODES,
   edges: [],
+  activeTool: "hand",
   pendingPlacementType: null,
   pendingPlacementTier: 1,
   selectedForEdgeId: null,
   zoom: 1,
+  panX: 0,
+  panY: 0,
 
-  setPendingPlacement: (type) => set({ pendingPlacementType: type, selectedForEdgeId: null }),
+  /** Switches to Hand or Line — always disarms whatever node type was staged for the Node tool,
+   * so leaving Node (for either other tool) can't leave a stale "tap to place" armed behind it. */
+  setActiveTool: (tool) => set({ activeTool: tool, pendingPlacementType: null, selectedForEdgeId: null }),
+
+  /** Arms the Node tool with a type picked from the node-picker modal — tapping the grid now
+   * stamps down that type (see placeNodeAt) until the player switches to Hand or Line, or reopens
+   * the modal to arm a different type. */
+  armNodeType: (type) => set({ activeTool: "node", pendingPlacementType: type, pendingPlacementTier: 1, selectedForEdgeId: null }),
+
   setPendingPlacementTier: (tier) => set({ pendingPlacementTier: tier }),
 
+  /** Deliberately leaves pendingPlacementType armed after placing — "stamp mode" — so the Node
+   * tool can drop several of the same type without reopening the picker for each one. */
   placeNodeAt: (x, y) => {
     const { pendingPlacementType, pendingPlacementTier } = get();
     if (!pendingPlacementType) {
@@ -67,7 +95,6 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
     const catalogIsTiered = pendingPlacementType !== "router";
     set((state) => ({
       nodes: [...state.nodes, { id, type: pendingPlacementType, ...(catalogIsTiered ? { tier: pendingPlacementTier } : {}), x, y, fixed: false }],
-      pendingPlacementType: null,
     }));
   },
 
@@ -85,7 +112,7 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
 
   tapNodeForEdge: (id) =>
     set((state) => {
-      if (state.pendingPlacementType) {
+      if (state.activeTool !== "line") {
         return state;
       }
       if (state.selectedForEdgeId === null) {
@@ -101,11 +128,19 @@ export const useDefenseGridStore = create<DefenseGridState>((set, get) => ({
       return { edges, selectedForEdgeId: null };
     }),
 
+  /** Direct delete — tapping the edge's own line on the grid (see grid-edge's onClick in
+   * DefenseGrid.tsx), independent of the Line tool's link/unlink-by-tapping-two-nodes gesture. */
+  removeEdge: (from, to) =>
+    set((state) => ({
+      edges: state.edges.filter((edge) => !((edge.from === from && edge.to === to) || (edge.from === to && edge.to === from))),
+    })),
+
   setZoom: (zoom) => set({ zoom: Math.max(0.5, Math.min(2, zoom)) }),
+  setPan: (x, y) => set({ panX: x, panY: y }),
 
   reset: () => {
     nextPlaceableId = FIRST_PLACEABLE_ID;
-    set({ nodes: INITIAL_NODES, edges: [], pendingPlacementType: null, pendingPlacementTier: 1, selectedForEdgeId: null, zoom: 1 });
+    set({ nodes: INITIAL_NODES, edges: [], activeTool: "hand", pendingPlacementType: null, pendingPlacementTier: 1, selectedForEdgeId: null, zoom: 1, panX: 0, panY: 0 });
   },
 }));
 
