@@ -25,9 +25,12 @@ body {
   height: 100%;
 }
 
-/* App header. Small and quiet on purpose — it is a "where am I" label above a screen that owns
- * the rest of the space, not a title bar competing with the screen's own heading. */
+/* App header. On the hub it is just the brand; on every other screen it is the way back, which
+ * is the only navigation this app has now — see App.tsx on why the bottom nav went away. */
 .payload-app > header {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
   padding: 0.55rem 1rem;
   background: var(--color-background-panel);
   border-bottom: 1px solid var(--color-border);
@@ -35,6 +38,40 @@ body {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-text-muted);
+}
+
+/* Both header headings are <h1> (one per page, in the bar) and so need their browser default
+ * size and margin taken off — they are app-bar labels, not page titles in the document sense. */
+.payload-app > header h1 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.payload-brand {
+  color: var(--color-text);
+  letter-spacing: 0.22em;
+}
+
+/* Sized as a real tap target rather than a line of text: it is the only way out of a screen. */
+.payload-app > header .payload-back {
+  padding: 0.25rem 0.5rem;
+  margin: -0.25rem 0 -0.25rem -0.5rem;
+  border-radius: 0.35rem;
+  color: var(--color-faction-movement);
+  text-decoration: none;
+  letter-spacing: 0.1em;
+}
+
+.payload-app > header .payload-back:active {
+  background: var(--color-background-panel-raised);
+}
+
+.payload-header-title {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Links inherit the theme instead of the browser's blue-underline default, which read as broken
@@ -51,39 +88,9 @@ body {
 .payload-app-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
-}
-
-.payload-nav {
-  display: flex;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-background-panel);
-}
-
-.payload-nav-link {
-  flex: 1;
-  padding: 0.6rem 0.15rem;
-  text-align: center;
-  /* One line, always: a wrapped label makes the bar taller than its neighbours and the whole row
-   * jitters as you move between screens. Labels are kept short enough to fit seven across 390px. */
-  font-size: 0.68rem;
-  white-space: nowrap;
-  color: var(--color-text-muted);
-  text-decoration: none;
-  border-top: 2px solid transparent;
-}
-
-.payload-nav-link.active {
-  color: var(--color-text);
-  border-top-color: var(--color-faction-movement);
-}
-
-.payload-screen h1 {
-  margin-top: 0;
-  font-size: 1.5rem;
-  letter-spacing: -0.01em;
 }
 
 /* --- Shared card, used by HQ's summaries and by the not-built-yet screens ----------------- */
@@ -110,6 +117,27 @@ body {
   line-height: 1.45;
 }
 
+/* Two cards sharing a row on the hub. They wrap on a very narrow screen rather than squeezing
+ * their labels, since there are only ever two of them. */
+.payload-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.payload-card-row > .payload-card {
+  flex: 1 1 8rem;
+}
+
+/* Quieter than a full destination card: reachable, but not competing with Virus and Pertahanan. */
+.payload-card--minor {
+  opacity: 0.75;
+}
+
+.payload-card--minor h2 {
+  font-size: 0.85rem;
+}
+
 /* A card that is itself a link (HQ's summaries) — the whole surface is the tap target. */
 a.payload-card {
   text-decoration: none;
@@ -134,6 +162,11 @@ a.payload-card:hover {
 .payload-card-stat strong {
   font-size: 1.15rem;
   color: var(--color-text);
+}
+
+.payload-card-note--divided {
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.5rem;
 }
 
 .payload-card-note {
@@ -164,6 +197,24 @@ a.payload-card:hover {
   color: var(--color-text-muted);
   max-width: 40rem;
   line-height: 1.5;
+}
+
+/* Section headings inside a screen. Without the page <h1> above them (the app bar is the heading
+ * now) a browser-default h2 reads as the title of the whole screen, which is wrong and enormous —
+ * these are labels for the block under them. */
+.payload-screen-body > section > h2 {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.payload-screen-body > section:first-child > h2 {
+  margin-top: 0;
+}
+
+.payload-screen-body > section > p {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
 }
 
 .payload-screen--full-bleed {

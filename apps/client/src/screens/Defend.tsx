@@ -852,7 +852,7 @@ export function Defend(): JSX.Element {
 
         <div className="payload-defend-topbar">
           <Link to="/" className="payload-defend-exit" data-testid="defend-exit">
-            ← Keluar
+            ← HQ
           </Link>
           <button type="button" className="payload-defend-test-btn" data-testid="defend-test" onPointerDown={(event) => event.stopPropagation()} onClick={handleTestDefense} disabled={isTesting}>
             {isTesting ? "Menguji…" : "🧪 Uji pertahanan"}

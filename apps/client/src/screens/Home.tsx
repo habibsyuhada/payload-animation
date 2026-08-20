@@ -42,7 +42,7 @@ export function Home(): JSX.Element {
   const defensiveCount = nodes.length - entryCount - coreCount;
 
   return (
-    <Screen title="HQ / Home">
+    <Screen title="HQ">
       <Link to="/virus-lab" className="payload-card" data-testid="hq-virus-card">
         <h2>Virus</h2>
         <p className="payload-card-stat">
@@ -68,6 +68,20 @@ export function Home(): JSX.Element {
           {entryCount} Entry · {coreCount} Core — buka untuk mengatur dan mengujinya.
         </p>
       </Link>
+
+      {/* The two screens whose feature does not exist yet sit together, half-width and quieter:
+      still reachable — each one explains what it is waiting on — without pretending they are
+      destinations worth the same weight as the two above. */}
+      <div className="payload-card-row">
+        <Link to="/scan" className="payload-card payload-card--minor" data-testid="hq-scan-card">
+          <h2>Scan</h2>
+          <p className="payload-card-note">Cari lawan · belum ada</p>
+        </Link>
+        <Link to="/research" className="payload-card payload-card--minor" data-testid="hq-research-card">
+          <h2>Riset</h2>
+          <p className="payload-card-note">Buka blok baru · belum ada</p>
+        </Link>
+      </div>
 
       <div className="payload-card">
         <h2>Baru pertama kali?</h2>

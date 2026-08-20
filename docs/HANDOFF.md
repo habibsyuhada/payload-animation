@@ -23,7 +23,12 @@ Yang ada sekarang:
   / `+ aksi` meniru modal "Pilih Node" halaman Defend; nesting maksimum 3 level, tombol anaknya
   di-disable di level terdalam. Sudah dicek manual di viewport 390×844.
 - **Defense Grid dihapus**, diganti halaman Defend: keduanya menggambar graf yang sama, dan Defend
-  yang bisa **menguji** hasilnya. Nav "Defense" sekarang langsung ke sana.
+  yang bisa **menguji** hasilnya.
+- **Navigasi hub-and-spoke, tanpa bottom nav.** HQ adalah ruang utama berisi kartu; tiap layar lain
+  dimasuki dari sana dan ditinggalkan lewat "← HQ" di app bar. **App bar itu sekaligus heading
+  halaman** — `Screen` sengaja tidak menggambar `<h1>` lagi. Layar **Liga** dan **Replay** dihapus
+  (komponen `ReplayPlayer` tetap, masih dipakai Onboarding), jadi tersisa HQ, Lab, Defense, Scan,
+  Riset.
 - **Gauntlet Defend jalan di v2**, dan chip loadout berubah jadi **chip aturan yang menyala** saat
   aturannya menembak selama replay diputar (`ruleFirings` di `packages/replay/src/compile.ts` →
   `firedRuleIds` di `logic/attackPlayback.ts` → `data-firing` di Defend).
@@ -71,7 +76,7 @@ setelah `pnpm --filter @payload/balance-lab build`.
   shell: `vite-plugin-pwa` + manifest sudah cukup.
 - **Lawan offline** — `tools/seed-defenses` masih satu baris. 200 pertahanan AI yang di-bundle
   sebagai data statis akan menutup gameplay loop tanpa server sama sekali (lihat layar Scan).
-- **Riwayat battle** — layar Replay masih kosong karena tidak ada battle tersimpan untuk dibuka.
+- **Riwayat battle** — layar Replay dihapus karena belum ada battle tersimpan untuk dibuka; kalau riwayat sudah ada, layarnya dibangun ulang (mesinnya sudah lengkap di `packages/replay` + `components/ReplayPlayer`).
 - **Sinkronisasi opsional** — kalau server datang nanti, klien tidak perlu berubah: kirim
   `(seed, virus, defense)`, server verifikasi hash lognya (PLAN.md B4.2 sudah menyebut ini).
 
@@ -102,7 +107,8 @@ packages/sim/src/
 packages/replay/src/
   compile.ts         BattleLog -> Timeline; sekarang plus ruleFirings + rulesFiringAt()
 apps/client/src/
-  screens/Home.tsx       HQ: ringkasan virus & pertahanan tersimpan
+  App.tsx                shell hub-and-spoke; app bar = heading halaman
+  screens/Home.tsx       HQ: hub — ringkasan virus & pertahanan tersimpan
   screens/NotBuiltYet.tsx kartu untuk 4 layar yang fiturnya belum ada
   state/localPersist.ts  satu-satunya tempat aplikasi ini menulis ke perangkat
   screens/VirusLab.tsx   editor event sheet tap-driven (V7.3)
@@ -125,7 +131,7 @@ docs/RULESET.md      §0–§9 v1 (beku), §10–§13 v2
 pnpm lint && pnpm typecheck && pnpm build          # semua hijau saat handoff ini ditulis
 
 # semua test butuh Chromium; di sandbox ini path-nya harus disebut eksplisit
-PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 388 test hijau
+PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 386 test hijau
 
 pnpm --filter @payload/balance-lab dominance       # cek dominasi (~1 menit), ini yang di CI
 pnpm --filter @payload/balance-lab report          # laporan lengkap; exit 1 selama masih ada
@@ -177,6 +183,9 @@ Nomor 1–10 dari handoff sebelumnya masih berlaku semua; yang di bawah ini tamb
 16. **Kamera Defend sengaja TIDAK disimpan.** Halaman itu mem-frame seluruh graf pada layout
     pertama; zoom/pan yang dipulihkan akan berkelahi dengan itu dan bisa membuka ke ruang kosong
     di sebelah layout yang barusan disimpan.
+17. **App bar adalah `<h1>` halaman.** Sebelumnya `Screen` menggambar `<h1>{title}</h1>` tepat di
+    bawah bar yang sudah menyebut judul yang sama — satu hal ditulis dua kali di bagian layar yang
+    paling mahal. Kalau menambah layar baru, jangan tambahkan heading judul sendiri; cukup `title`.
 
 ## 6. Konteks angka yang sering dipakai
 

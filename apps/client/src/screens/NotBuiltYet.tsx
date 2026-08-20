@@ -14,7 +14,7 @@ export function NotBuiltYet({ children, blockedBy, reference }: { children: Reac
     <div className="payload-card payload-soon" data-testid="not-built-yet">
       <span className="payload-soon-tag">Belum dibangun</span>
       <p>{children}</p>
-      <p className="payload-card-note">
+      <p className="payload-card-note payload-card-note--divided">
         Menunggu: {blockedBy} · {reference}
       </p>
     </div>

@@ -13,7 +13,7 @@ beforeEach(() => {
   root = createRoot(container);
   flushSync(() => root.render(<App />));
   // HashRouter starts wherever the browser's location hash already is (a prior test may have left
-  // it on #/league) — reset to the root screen so every test starts from the same place.
+  // it on #/scan) — reset to the hub so every test starts from the same place.
   window.location.hash = "#/";
 });
 
@@ -33,57 +33,54 @@ async function findByTestId(testId: string): Promise<Element> {
 }
 
 /**
- * Nav labels are shorter than screen titles ("Lab", "Riset", "Liga"): seven of them share a 390px
- * bar, and a label that wraps makes the whole bar taller than its neighbours.
- *
- * `showsOwnTitle: false` is only for Defend, which brings its own full-screen shell instead of
- * going through `Screen` and so renders no heading of its own. Every other screen repeats its
- * title in the body via `Screen`'s <h1>. The header assertion below applies to all of them.
+ * Every spoke reachable from the hub: the card that opens it, and how you know you arrived.
+ * "Defense" is the one screen that brings its own full-screen shell instead of going through
+ * `Screen`, so it has its own test id.
  */
-const SCREENS: readonly { label: string; title: string; testId?: string; showsOwnTitle?: boolean }[] = [
-  { label: "HQ", title: "HQ / Home" },
-  { label: "Lab", title: "Virus Lab" },
-  // "Defense" is the full-screen Defend page, which replaced the old Defense Grid editor. It
-  // renders its own fixed-position shell rather than going through `Screen`, so it has its own
-  // test id and no visible heading of its own — but it still registers its title with the shell.
-  { label: "Defense", title: "Defense", testId: "defend-page", showsOwnTitle: false },
-  { label: "Scan", title: "Scan / Attack" },
-  { label: "Replay", title: "Replay Player" },
-  { label: "Riset", title: "Research" },
-  { label: "Liga", title: "League" },
+const SPOKES: readonly { card: string; arrivedAt: string; header: string }[] = [
+  { card: "hq-virus-card", arrivedAt: "screen-Virus Lab", header: "Virus Lab" },
+  { card: "hq-defense-card", arrivedAt: "defend-page", header: "Defense" },
+  { card: "hq-scan-card", arrivedAt: "screen-Scan / Attack", header: "Scan / Attack" },
+  { card: "hq-research-card", arrivedAt: "screen-Research", header: "Research" },
 ];
 
-describe("App navigation", () => {
-  it("starts on the HQ / Home screen", async () => {
-    const screen = await findByTestId("screen-HQ / Home");
-    expect(screen).toBeDefined();
+describe("App — hub and spoke", () => {
+  it("starts on the hub, showing the brand rather than a back link", async () => {
+    await findByTestId("screen-HQ");
+    const header = await findByTestId("app-header");
+    expect(header.textContent).toContain("PAYLOAD");
+    expect(page.getByTestId("back-to-hub").query()).toBeNull();
   });
 
-  it("renders all 7 nav links in the bottom nav (screens themselves may contain their own extra links)", async () => {
-    await findByTestId("app-header"); // wait for first render to land
-    const navLinks = document.querySelectorAll(".payload-nav-link");
-    expect(navLinks).toHaveLength(SCREENS.length);
+  it("has no bottom nav at all — the hub's cards are the navigation", async () => {
+    await findByTestId("app-header");
+    expect(document.querySelectorAll("nav")).toHaveLength(0);
   });
 
-  for (const target of SCREENS) {
-    it(`navigates to the ${target.title} screen and updates the header`, async () => {
-      await findByTestId("app-header");
-      await page.getByRole("link", { name: target.label }).click();
-      const screen = await findByTestId(target.testId ?? `screen-${target.title}`);
-      if (target.showsOwnTitle !== false) {
-        expect(screen.textContent).toContain(target.title);
-      }
+  for (const spoke of SPOKES) {
+    it(`opens ${spoke.header} from its hub card and names it in the header`, async () => {
+      await findByTestId("screen-HQ");
+      (page.getByTestId(spoke.card).element() as HTMLElement).click();
+
+      await findByTestId(spoke.arrivedAt);
       const header = await findByTestId("app-header");
-      expect(header.textContent).toBe(target.title);
+      expect(header.textContent).toContain(spoke.header);
     });
   }
 
-  it("marks only the active screen's nav link as active", async () => {
-    await findByTestId("app-header");
-    await page.getByRole("link", { name: "Riset" }).click();
-    await findByTestId("screen-Research");
-    const activeLinks = page.getByTestId("app-header").element().ownerDocument.querySelectorAll(".payload-nav-link.active");
-    expect(activeLinks).toHaveLength(1);
-    expect(activeLinks[0]!.textContent).toBe("Riset");
+  it("returns to the hub from a spoke's back link", async () => {
+    await findByTestId("screen-HQ");
+    (page.getByTestId("hq-scan-card").element() as HTMLElement).click();
+    await findByTestId("screen-Scan / Attack");
+
+    (await findByTestId("back-to-hub")).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await findByTestId("screen-HQ");
+    expect(page.getByTestId("back-to-hub").query()).toBeNull();
+  });
+
+  it("keeps the tutorial reachable from the hub", async () => {
+    await findByTestId("screen-HQ");
+    (page.getByTestId("home-start-onboarding").element() as HTMLElement).click();
+    await findByTestId("screen-Onboarding");
   });
 });
