@@ -205,7 +205,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.1b** Tabel & modul node v2: perluas `ruleset-v2.ts` (getter bersufiks `V2`), buat
       `packages/sim/src/nodes-v2/` 1:1 dengan `DEFENSE_NODE_TYPES_V2` (angka awal = salinan persis
       v1) — test 1:1 structural; `nodes/` & `ruleset.ts` tidak tersentuh; hash tidak bergerak.
-- [ ] **8.1c** Arahkan `engine-v2.ts` ke `nodes-v2/` (hanya blok import) — hash `sheet-v2` tetap
+- [x] **8.1c** Arahkan `engine-v2.ts` ke `nodes-v2/` (hanya blok import) — hash `sheet-v2` tetap
       `c97faa3a`.
 - [ ] **8.1d** `validateDefenseGraph` sadar-versi lewat `topologyRulesFor(ruleset)` + kode error
       `unsupported-node-type` + perbaiki bug laten `getDefenseNodeCost` yang melempar (jadi melapor)

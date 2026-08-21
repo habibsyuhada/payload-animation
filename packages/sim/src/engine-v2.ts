@@ -3,15 +3,15 @@ import { computeScore } from "./score.js";
 import { BATTLE_TICK_LIMIT, applyPermille, ticksToCrossEdge } from "./fixed.js";
 import { hopDistance, shortestPath } from "./graph.js";
 import {
-  effectiveAccuracyPermille,
-  firewallMaxHp,
-  getIceSentryConfig,
-  getScannerConfig,
-  resolveCoreTick,
-  resolveFirewallTick,
-  rollIceSentryHit,
-  trapTriggerDamage,
-} from "./nodes/index.js";
+  effectiveAccuracyPermilleV2,
+  firewallMaxHpV2,
+  getIceSentryConfigV2,
+  getScannerConfigV2,
+  resolveCoreTickV2,
+  resolveFirewallTickV2,
+  rollIceSentryHitV2,
+  trapTriggerDamageV2,
+} from "./nodes-v2/index.js";
 import { createRng, type Rng } from "./rng.js";
 import {
   DEFAULT_CONDITION_TARGET_NODE_TYPES_V2,
@@ -522,7 +522,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
             continue;
           }
           if (node.type === "firewall" && !state.destroyedFirewallIds.has(node.id)) {
-            const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHp(requireTier(node));
+            const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHpV2(requireTier(node));
             const newHp = Math.max(0, currentHp - contribution.splashDamage);
             state.firewallHp.set(node.id, newHp);
             events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp) });
@@ -549,8 +549,8 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       const node = findNode(graph, location.nodeId);
       if (node.type === "firewall" && !state.destroyedFirewallIds.has(node.id)) {
         const tier = requireTier(node);
-        const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHp(tier);
-        const passive = resolveFirewallTick(currentHp, tier);
+        const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHpV2(tier);
+        const passive = resolveFirewallTickV2(currentHp, tier);
         const newHp = Math.max(0, passive.remainingHp - bruteForceDamage - exploitDamage);
         state.firewallHp.set(node.id, newHp);
         events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp) });
@@ -566,7 +566,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           applyOverloadSplash(node.id);
         }
       } else if (node.type === "core") {
-        const passive = resolveCoreTick(state.coreHp);
+        const passive = resolveCoreTickV2(state.coreHp);
         const newHp = Math.max(0, passive.remainingHp - bruteForceDamage - exploitDamage);
         const drained = state.coreHp - newHp;
         state.coreHp = newHp;
@@ -581,7 +581,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       if (cloakActive) {
         continue;
       }
-      const config = getIceSentryConfig(requireTier(iceNode));
+      const config = getIceSentryConfigV2(requireTier(iceNode));
       if (!isVirusInRange(graph, iceNode.id, config.radiusHops, location)) {
         continue;
       }
@@ -589,8 +589,8 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         continue;
       }
       const scannedActive = state.scannedUntilTick !== null && tick < state.scannedUntilTick;
-      const accuracy = effectiveAccuracyPermille(config.accuracyPermille, scannedActive ? state.scannedAccuracyBonusPermille : 0, slowCrawl?.iceAccuracyReductionPermille ?? 0);
-      const hit = rollIceSentryHit(rng, accuracy);
+      const accuracy = effectiveAccuracyPermilleV2(config.accuracyPermille, scannedActive ? state.scannedAccuracyBonusPermille : 0, slowCrawl?.iceAccuracyReductionPermille ?? 0);
+      const hit = rollIceSentryHitV2(rng, accuracy);
       state.iceNextFireTick.set(iceNode.id, tick + config.fireIntervalTicks);
       if (!hit) {
         continue;
@@ -625,7 +625,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         if (tryAbsorbWithDecoy()) {
           events.push({ tick, type: "decoy-absorbed", actor: String(node.id), target: "virus" });
         } else {
-          const dealt = damageVirus(trapTriggerDamage(requireTier(node)));
+          const dealt = damageVirus(trapTriggerDamageV2(requireTier(node)));
           events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt });
         }
       }
@@ -635,7 +635,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       if (cloakActive) {
         continue;
       }
-      const config = getScannerConfig(requireTier(scannerNode));
+      const config = getScannerConfigV2(requireTier(scannerNode));
       if (!isVirusInRange(graph, scannerNode.id, config.radiusHops, location)) {
         continue;
       }
