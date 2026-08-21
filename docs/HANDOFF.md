@@ -1,128 +1,115 @@
-# HANDOFF — Fase 7 selesai (ruleset v2), lanjut ke keseimbangan & persistensi
+# HANDOFF — Fase 8 sedang berjalan (node/blok/riset), 8.1–8.4 selesai
 
-> Catatan serah-terima antar sesi. Ditulis 2026-08-20, branch `claude/handoff-docs-uxp4hn`.
-> Menggantikan handoff sebelumnya (yang isinya "kerjakan Fase 7" — sudah dikerjakan).
+> Catatan serah-terima antar sesi. Ditulis 2026-08-21, branch
+> `claude/plan-node-blok-logika-research-hm8xjl`. Menggantikan handoff Fase 7 (2026-08-20) — isinya
+> sekarang bagian "sejarah" di §6.
 > Dokumen acuan utama tetap `PLAN.md`; ini cuma peta jalan untuk sesi berikutnya.
 
 ## 1. Posisi sekarang
 
-**Fase 7 (ruleset v2 — virus sebagai event sheet) selesai, V7.1 sampai V7.5.** Keputusan desainnya
-ada di `docs/ADR/0006`, yang sekarang berstatus **accepted** dan kedua pertanyaan terbukanya sudah
-dijawab di dalam dokumen itu sendiri. Angkanya ada di `docs/RULESET.md` **§10–§13**.
+**Fase 7 (ruleset v2) selesai** (lihat §6 untuk ringkasannya). **Fase 8** (`docs/ADR/0007`, "node,
+blok logika, riset") sedang berjalan: **8.1, 8.2, 8.3, 8.4 sudah landed**; 8.5 (dokumentasi — ADR
+0008/0009, RULESET §11/§11a/§12a/§14, handoff ini) sedang ditulis di sesi yang sama dengan handoff
+ini. 8.6–8.8 (pohon riset) **belum dimulai sama sekali**.
 
-Yang ada sekarang:
+Yang sudah ada sejak Fase 7 selesai:
 
-- **Dua engine berdampingan** di `packages/sim`. `simulate()` memilih dari `rulesetVersion` di
-  input. v1 (`engine.ts`) **dibekukan** — golden log & hash lintas-platformnya tidak berubah satu
-  byte pun, dan itu diuji (`test/determinism.test.ts`, sekarang plus satu skenario v2).
-- **Engine v2** (`engine-v2.ts`): pohon aturan dievaluasi depth-first tiap tick, aksi slot diambil
-  penulis pertama, aksi kumulatif menumpuk, `once` per baris, event log baru `rule-fired`.
-  Urutan ticknya ada di docstring file itu dan di RULESET §11.
-- **Virus Lab ditulis ulang** jadi editor event sheet tap-driven (`screens/VirusLab.tsx` +
-  `state/virusLabStore.ts` + `data/sheetCatalog.ts`). Tidak ada drag sama sekali; picker `+ kondisi`
-  / `+ aksi` meniru modal "Pilih Node" halaman Defend; nesting maksimum 3 level, tombol anaknya
-  di-disable di level terdalam. Sudah dicek manual di viewport 390×844.
-- **Defense Grid dihapus**, diganti halaman Defend: keduanya menggambar graf yang sama, dan Defend
-  yang bisa **menguji** hasilnya.
-- **Navigasi hub-and-spoke, tanpa bottom nav.** HQ adalah ruang utama berisi kartu; tiap layar lain
-  dimasuki dari sana dan ditinggalkan lewat "← HQ" di app bar. **App bar itu sekaligus heading
-  halaman** — `Screen` sengaja tidak menggambar `<h1>` lagi. Layar **Liga** dan **Replay** dihapus
-  (komponen `ReplayPlayer` tetap, masih dipakai Onboarding), jadi tersisa HQ, Lab, Defense, Scan,
-  Riset.
-- **Gauntlet Defend jalan di v2**, dan chip loadout berubah jadi **chip aturan yang menyala** saat
-  aturannya menembak selama replay diputar (`ruleFirings` di `packages/replay/src/compile.ts` →
-  `firedRuleIds` di `logic/attackPlayback.ts` → `data-firing` di Defend).
-- **balance-lab** punya generator sheet acak berbenih + pencarian dominasi, plus job CI
-  `balance-dominance`.
+- **Tabel node v2 dipisah dari v1 yang beku** (8.1, ADR 0007 §A). `DefenseNodeType` jadi superset
+  runtime-checked (`DEFENSE_NODE_TYPES_V1`/`_V2`), tabel angka v2 pindah ke `ruleset-v2.ts` +
+  `nodes-v2/` (getter bersufiks `V2`, tidak me-re-export fungsi v1).
+- **Lima node pertahanan baru** (8.2a, RULESET §14): Patch Server, Tarpit, Jammer, Turnstile,
+  Alarm Relay — 11 tipe bisa dipasang sekarang, dari 6.
+- **"ICE Nest" sebagian diperbaiki** (8.2b): satu virus hanya bisa kena satu tembakan ICE Sentry
+  per tick. **Belum cukup** — masih dominan lewat cooldown yang tidak sinkron antar sentry, lihat
+  §2(a).
+- **Virus multi-entitas** (8.3a–8.3e, ADR 0008): `worm-split` memecah virus jadi 2–3 tubuh berbagi
+  sheet yang sama; `detonate` sebagai pengorbanan sekali pakai; `set-checkpoint` + respawn.
+  `packages/replay` dan `apps/client` menggambar N tubuh dengan health bar independen.
+- **17 kondisi & 13 aksi baru** (8.4, RULESET §10.1/§10.2): 26 kondisi, 25 aksi total sekarang.
+  Termasuk mekanik bahasa baru — 4 flag boolean per entitas (`set-flag`/`flag-is`) — dan subsistem
+  HP untuk lima node pendukung (`target-strike`/`emp-burst`). `sheetCatalog.ts`'s
+  `takesNodeTypes`/`takesThreshold` diganti `params: readonly ParamSpec[]` generik.
+- **Riset masih placeholder.** `screens/Research.tsx` belum berubah dari Fase 7 — masih 13 baris
+  yang mengaku "semua isi katalog terbuka sejak awal". Ini yang PLAN.md 8.6–8.8 kerjakan.
 
 ## 2. Yang berikutnya dikerjakan
 
-Tidak ada fase yang "belum dimulai" di Fase 7 lagi. Tiga hal yang menunggu, urut prioritas:
+Urutan **tidak boleh diacak** (PLAN.md): 8.6 → 8.7 → 8.8. Semuanya bergantung pada 8.1–8.4 yang
+sudah selesai; tidak ada lagi yang memblokir mulainya.
 
-### (a) "ICE Nest" — satu-satunya utang dominasi yang tersisa
+### (a) "ICE Nest" masih dominan — 8.2b tidak cukup sendirian
 
-Dua ICE Sentry II yang radiusnya menumpuk di satu chokepoint **menahan setiap sheet acak di ≤7.5%
-winrate**. Ini persis temuan v1 di RULESET §9 yang sengaja tidak diputuskan waktu itu, dan sekarang
-terukur otomatis (RULESET §13). Cloak berbasis tick — salah satu kandidat perbaikan yang ADR 0006
-tawarkan — terbukti **tidak cukup sendirian**.
+Perbaikan "satu tembakan per tick" (8.2b) sudah berjalan, tapi dua ICE Sentry II yang cooldown-nya
+**tidak sinkron** tetap memberi sustained fire rate lebih tinggi daripada satu sentry — itu yang
+sebenarnya jadi sumber langit-langit ≤7.5% winrate, bukan simultanitas tembakan. Tercatat di
+`tools/balance-lab/src/known-dominance.ts` dengan dua kandidat perbaikan lanjutan (shared cooldown
+pool per node target, atau batas overlap radius saat save/validate). **PLAN.md 8.8** adalah tempat
+ini akhirnya diputuskan — mengosongkan `known-dominance.ts` tetap syarat rilis v2 (PLAN.md V7.4).
 
-Tercatat di `tools/balance-lab/src/known-dominance.ts`. Job CI tidak gagal karenanya, tapi gagal
-untuk temuan baru apa pun. **Mengosongkan file itu adalah syarat rilis v2 ke pemain** (PLAN.md
-V7.4). Kandidat perbaikan yang belum dipilih, sama seperti di §9: batasi tumpang-tindih radius ICE,
-turunkan akurasi dasar ICE tier II, atau batasi satu virus hanya bisa kena satu tembakan ICE per
-tick. Yang ketiga paling mudah dijelaskan ke pemain ("satu virus, satu tembakan per tick") dan
-paling langsung menyerang penyebabnya, tapi **belum dipilih** — dan perlu tabel node khusus v2
-(sekarang `engine-v2.ts` masih membaca tabel node v1 di `nodes/`, yang dibekukan bersama v1).
+### (b) Pohon riset (PLAN.md 8.6–8.8) — belum dimulai
 
-### (b) Kalibrasi pita winrate
+Desainnya sudah final di ADR 0007 §C dan ADR 0009 (arsitektur: `packages/shared`, boundaries
+`shared → sim` dilonggarkan, `ResearchState` lokal-dulu tapi berbentuk payload server). Yang
+tersisa murni implementasi:
 
-Sebagian besar dari 20 matchup arketipe masih di luar [25%, 75%] — sama seperti v1, dan sebagian
-memang disengaja (arketipenya build ekstrem, bukan sampel pemain rata-rata). Profil v2 mendekati v1
-setelah perbaikan kematian di §13, artinya event sheet tidak diam-diam menggeser keseimbangan.
-`tools/balance-lab/REPORT.md` selalu terbaru; regenerasi dengan
-`pnpm --filter @payload/balance-lab build:deps && node tools/balance-lab/dist/cli.js > tools/balance-lab/REPORT.md`.
+- **8.6**: `packages/shared/src/research.ts` + `research-tree.ts` (±70 simpul, 5 cabang) +
+  `unlocks.ts`. Test kelengkapan (tiap kind & pasangan node×tier tepat sekali di pohon), tanpa
+  siklus prasyarat, starter set cukup untuk sheet legal tier akun 1.
+- **8.7**: `state/researchStore.ts`, `logic/unlocks.ts` (`isUnlocked`, `validateAgainstUnlocks`),
+  `screens/Research.tsx` menggantikan placeholder, migrasi sekali-jalan untuk sheet/layout
+  tersimpan (ADR 0009 §D) — **wajib** sebelum penguncian aktif, kalau tidak pemain lama menemukan
+  virusnya sendiri "ilegal".
+- **8.8**: `tools/balance-lab` — parameter baru di generator (`hops`/`ticks`/`flagIndex`/`count`),
+  `NODE_TYPES` diperluas, dimensi pita kedalaman riset di `dominance.ts`/`report.ts`. Ini juga
+  tempat "ICE Nest" (poin a) akhirnya diselesaikan.
 
-### (c) Offline-first — langkah 1 sudah jalan, sisanya belum
+### (c) Kalibrasi pita winrate & offline-first (belum berubah dari Fase 7)
 
-**Sudah:** sheet Virus Lab dan layout Defend tersimpan ke `localStorage`
-(`state/localPersist.ts`), bertahan lewat refresh, dan HQ meringkas keduanya. Yang disimpan cuma
-**input** yang ditulis pemain — bukan `BattleLog`, karena log bisa dihitung ulang persis dari
-`(rulesetVersion, seed, virus, defense)`.
-
-**Belum:**
-
-- **PWA / service worker** — build web belum bisa dibuka tanpa jaringan. Tidak ada satu pun
-  panggilan jaringan di klien (sim & replay jalan di browser), jadi ini murni soal caching app
-  shell: `vite-plugin-pwa` + manifest sudah cukup.
-- **Lawan offline** — `tools/seed-defenses` masih satu baris. 200 pertahanan AI yang di-bundle
-  sebagai data statis akan menutup gameplay loop tanpa server sama sekali (lihat layar Scan).
-- **Riwayat battle** — layar Replay dihapus karena belum ada battle tersimpan untuk dibuka; kalau riwayat sudah ada, layarnya dibangun ulang (mesinnya sudah lengkap di `packages/replay` + `components/ReplayPlayer`).
-- **Sinkronisasi opsional** — kalau server datang nanti, klien tidak perlu berubah: kirim
-  `(seed, virus, defense)`, server verifikasi hash lognya (PLAN.md B4.2 sudah menyebut ini).
-
-Utang halaman Defend lain yang masih berlaku:
-
-- Belum ada konversi resmi `DefenseGraph` untuk server.
-- Graf yang dihasilkan belum lolos `validateDefenseGraph` (halaman ini punya 1 Entry, ruleset minta
-  2). Sengaja: sandbox, catatan strukturnya info, bukan penghalang.
-- Node pertahanan gampang jadi hiasan: selama Entry masih dalam jangkauan Core, virus lewat "jalan
-  tol". Ide yang sudah ditawarkan tapi **belum dipilih**: (a) tandai node yang tak pernah dilewati,
-  (b) gambar rute yang diambil virus, (c) larang Entry↔Core tersambung langsung. Catatan: sekarang
-  chip aturan yang menyala sudah menjawab sebagian "kenapa penyerang ini lolos", tapi bukan
-  "node mana yang tidak berguna".
+Backlog terpisah, tidak diblokir Fase 8: `tools/balance-lab/REPORT.md` selalu bisa diregenerasi
+(`pnpm --filter @payload/balance-lab build:deps && node tools/balance-lab/dist/cli.js`); offline
+(PWA/service worker, `tools/seed-defenses`, riwayat battle) masih di posisi yang sama seperti
+handoff Fase 7 — lihat riwayat commit doc ini kalau perlu detailnya lagi.
 
 ## 3. Peta file
 
 ```
 packages/sim/src/
-  types.ts           kontrak data; BattleInput = union v1|v2, tipe sheet v2 ada di sini
+  types.ts           kontrak data; ConditionKind/ActionKind (26/25 kind), SheetCondition/
+                      SheetAction params baru (hops, ticks, flagIndex, count, thresholdPermille,
+                      targetNodeTypes, flagValue), DefenseNodeType superset (8.1a)
   simulate.ts        DISPATCHER — ini yang dipanggil semua orang
   engine.ts          engine v1, DIBEKUKAN (simulateV1). Jangan disentuh.
-  engine-v2.ts       engine sheet v2 + urutan tick v2 di docstring-nya
-  sheet.ts           bentuk sheet: walkSheet, harga (sheetWeightKb), validateVirusProgram
-  ruleset-v2.ts      SEMUA angka v2 (bobot KB kondisi/aksi, cloak tick+cooldown, cap per tier)
-  ruleset.ts         SEMUA angka v1, dibekukan
-  score.ts           skor, dipakai kedua engine (RULESET §8 tidak berbeda antar versi)
+  engine-v2.ts       engine sheet v2 MULTI-ENTITAS; urutan tick lengkap di docstring-nya + RULESET §11
+  sheet.ts           bentuk sheet, harga, validateVirusProgram (+ range check param 8.4), sheetCanSplit
+  ruleset-v2.ts      SEMUA angka v2: kondisi/aksi (termasuk 8.4), 12 tipe node (7 lama + 5 baru),
+                      subsistem HP node pendukung (SUPPORT_NODE_HP_V2)
+  ruleset.ts         SEMUA angka v1, DIBEKUKAN — git diff --stat wajib kosong sepanjang Fase 8
+  nodes/             perilaku node v1, DIBEKUKAN
+  nodes-v2/          perilaku node v2, 1:1 dengan DEFENSE_NODE_TYPES_V2 (8.1b/8.2a)
+  score.ts           skor; v2 multi-entitas pakai MAKSIMUM integrity antar entitas hidup (ADR 0008)
   battle-common.ts   lookup graf yang dipakai kedua engine
 packages/replay/src/
-  compile.ts         BattleLog -> Timeline; sekarang plus ruleFirings + rulesFiringAt()
+  compile.ts         BattleLog -> Timeline; N track virus ("virus" untuk entitas 0, "virus:N" lainnya)
+  camera.ts          terminalMarker/follow-cam sadar multi-entitas
+  draw.ts            gambar N tubuh, tracer per entitas
 apps/client/src/
-  App.tsx                shell hub-and-spoke; app bar = heading halaman
-  screens/Home.tsx       HQ: hub — ringkasan virus & pertahanan tersimpan
-  screens/NotBuiltYet.tsx kartu untuk 4 layar yang fiturnya belum ada
-  state/localPersist.ts  satu-satunya tempat aplikasi ini menulis ke perangkat
-  screens/VirusLab.tsx   editor event sheet tap-driven (V7.3)
-  state/virusLabStore.ts pohon baris yang bisa diedit; toVirusProgram() melepas id editor
-  data/sheetCatalog.ts   label/warna kondisi & aksi — TIDAK menyalin satu bobot pun dari sim
-  screens/Defend.tsx     halaman Defend (peta + playback + chip aturan menyala)
-  logic/defenseTest.ts   gauntlet v2
-  data/gauntletViruses.ts 5 penyerang penguji sebagai sheet v2
+  screens/VirusLab.tsx    editor event sheet; ConditionParamControl/ActionParamControl generik (8.4)
+  state/virusLabStore.ts  ConditionInstance/ActionInstance + field param 8.4, updateAction baru
+  data/sheetCatalog.ts    ParamSpec generik menggantikan takesNodeTypes/takesThreshold (8.4)
+  screens/Defend.tsx      halaman Defend; frame.viruses[] untuk N tubuh
+  logic/attackPlayback.ts viruses[] + alias skalar entitas 0 untuk kompatibilitas mundur
+  screens/Research.tsx    MASIH PLACEHOLDER — ini yang 8.7 ganti
 tools/balance-lab/src/
-  sheet-generator.ts generator sheet acak berbenih (+ 2 bias yang didokumentasikan)
-  dominance.ts       pencarian kombo dominan dua arah
-  known-dominance.ts utang yang sudah diketahui — CI gagal untuk apa pun di luar ini
-docs/ADR/0006-*.md   keputusan event sheet (accepted, pertanyaan terbuka sudah dijawab)
-docs/RULESET.md      §0–§9 v1 (beku), §10–§13 v2
+  sheet-generator.ts generator sheet acak berbenih — BELUM tahu param 8.4 (hops/ticks/dst) atau
+                      node baru (8.2a) — pekerjaan 8.8
+  known-dominance.ts utang yang sudah diketahui — "ICE Nest" masih satu-satunya entry
+docs/ADR/
+  0006-*.md   event sheet (accepted)
+  0007-*.md   payung Fase 8 — node/blok/riset, prasyarat arsitektur (accepted, implementasi Fase 8)
+  0008-*.md   virus multi-entitas & checkpoint (accepted, 8.3)
+  0009-*.md   riset & ekonomi lokal (proposed, implementasi 8.6-8.8)
+docs/RULESET.md   §0–§9 v1 (beku), §10–§14 v2 (10.1-10.5 sheet, 11/11a tick+RNG, 12/12a budget+multi-entitas,
+                  13 balance-lab, 14/14.1 node v2 + HP node pendukung)
 ```
 
 ## 4. Cara menjalankan
@@ -131,7 +118,10 @@ docs/RULESET.md      §0–§9 v1 (beku), §10–§13 v2
 pnpm lint && pnpm typecheck && pnpm build          # semua hijau saat handoff ini ditulis
 
 # semua test butuh Chromium; di sandbox ini path-nya harus disebut eksplisit
-PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 386 test hijau
+PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test
+# packages/sim sendiri: 308 test (engine-v2.test.ts sekarang 67, termasuk 10 aksi baru 8.4)
+# apps/client sendiri: 100 test (termasuk sheetCatalog.test.ts baru + 2 kasus param VirusLab.test.tsx)
+# packages/replay: 66 test. tools/balance-lab: 29 test.
 
 pnpm --filter @payload/balance-lab dominance       # cek dominasi (~1 menit), ini yang di CI
 pnpm --filter @payload/balance-lab report          # laporan lengkap; exit 1 selama masih ada
@@ -148,67 +138,35 @@ Deploy: workflow `deploy-pages.yml` dijalankan manual (`workflow_dispatch`) dari
 
 ## 5. Jebakan yang sudah ketemu (jangan diulang)
 
-Nomor 1–10 dari handoff sebelumnya masih berlaku semua; yang di bawah ini tambahan dari Fase 7.
+Nomor 1–18 dari handoff Fase 7 masih berlaku semua (lihat riwayat commit doc ini kalau perlu
+teksnya lagi). Yang di bawah ini tambahan dari Fase 8.
 
-1. **Label marker bukan tempat menyimpan angka** — pakai field `amount` di `TimelineMarker`.
-2. **`node-hit` sengaja terpisah dari `damage`** (yang selalu berarti virus yang kena). Jangan
-   disatukan.
-3. **Efek per-tick menumpuk** — `attackPlayback.ts` menyisakan satu efek terbaru per korban.
-4. **Topbar Defend `pointer-events: none`**; tiap kontrol di dalamnya wajib `pointer-events: auto`.
-5. **Gesture butuh pointer capture** di elemen viewport.
-6. **Selector test harus di-scope pakai `data-testid`** — `data-node-id` polos bisa nyangkut.
-7. **`setState` store lalu langsung tap = null.** Tunggu node-nya muncul dulu.
-8. **Node di luar layar tidak punya action bar** (disengaja).
-9. **Cloak v1 per-node** — sudah dipindah ke basis tick di v2 (§10.4).
-10. **Jangkauan ICE Sentry itu hop, bukan jarak.**
-11. **Menghapus gerbang tersembunyi membuka asumsi tersembunyi.** Self Repair v2 tidak lagi punya
-    gerbang "tidak kena damage tick ini", dan itu membuat heal di langkah 5 bisa **menghidupkan
-    kembali** virus yang Integrity-nya sudah 0 di langkah 4 — cek kematian baru jalan di langkah 7.
-    Virus tanpa satu pun aksi serang jadi menggerogoti seluruh pertahanan sambil berkedip di 0 HP.
-    Sekarang kematian dikunci begitu menyentuh 0 (`state.died`). **Ditemukan oleh pencarian
-    dominasi, bukan oleh tangan** — itu argumen utuh untuk V7.4.
-12. **Id instance editor tidak boleh masuk `SheetEvent.id`.** Id di store berbasis counter, jadi dua
-    sesi yang membangun sheet identik akan menghasilkan byte `BattleLog` yang berbeda. `toVirusProgram()`
-    membuangnya; engine memakai alamat baris (`"1.0"`), dan `rowIdByRulePath()` memetakannya balik.
-13. **Bobot 40 KB per baris itu terasa.** Di tier 1 (2400 KB) beberapa arketipe harus turun satu
-    tier hanya supaya muat. Kalau menulis sheet contoh baru, hitung dulu dengan `sheetWeightKb()` —
-    test arketipe balance-lab memaksa deskripsi menyebut angka aslinya supaya tidak bisa melenceng.
-14. **`payload-sheet-*` di layar 390px**: keyword, chip, dan tombol `+` **menumpuk vertikal**, tidak
-    berbagi satu baris. Versi pertama membaginya jadi tiga kolom dan setiap label chip pecah
-    di tengah kata ("Node saat / ini ="). Kalau menambah kontrol ke dalam chip, cek ulang di 390px.
-15. **Counter id instance itu module-level, dan persistensi membangunkannya.** `nextNodeId` /
-    `nextInstanceId` mulai dari angka tetap tiap page load. Memulihkan layout yang node-nya 3..9
-    tanpa menaikkan counter membuat node berikutnya ber-id 3 lagi — dua node satu id. Bugnya cuma
-    muncul **setelah reload**, jadi `onRehydrateStorage` di kedua store wajib memanggil
-    `adoptRestoredIds`.
-16. **Kamera Defend sengaja TIDAK disimpan.** Halaman itu mem-frame seluruh graf pada layout
-    pertama; zoom/pan yang dipulihkan akan berkelahi dengan itu dan bisa membuka ke ruang kosong
-    di sebelah layout yang barusan disimpan.
-17. **Script paket tidak mem-build dependensi workspace-nya.** `pnpm build` di dalam sebuah paket
-    cuma menjalankan `tsc` untuk paket itu; yang mengurus urutan dependensi adalah **turbo**
-    (`dependsOn: ["^build"]` di `turbo.json`). Job CI `balance-dominance` awalnya memanggil script
-    paket langsung dan gagal di checkout bersih (`Cannot find module '@payload/sim'`) — padahal
-    lolos di mesin yang sudah pernah build. Kalau bikin job CI yang memanggil script paket, pastikan
-    dependensinya dibangun dulu; di sini lewat `build:deps`. **Uji dengan menghapus `dist/`
-    dependensinya, bukan cuma menjalankannya di mesin sendiri.**
-18. **App bar adalah `<h1>` halaman.** Sebelumnya `Screen` menggambar `<h1>{title}</h1>` tepat di
-    bawah bar yang sudah menyebut judul yang sama — satu hal ditulis dua kali di bagian layar yang
-    paling mahal. Kalau menambah layar baru, jangan tambahkan heading judul sendiri; cukup `title`.
-
-## 6. Konteks angka yang sering dipakai
-
-```
-v2: bobot baris 40 KB   maks. baris tier 1 = 12   nesting maks 3   aksi/tick maks 32
-    Cloak I = 30 tick aktif + 90 tick cooldown    Brute Force I = 40/tick
-    Exploit I = 250 (hanya tick pertama di node)  Self Repair I = 5/tick (TANPA gerbang)
-    move-toward-core 50 DU/tick, move-random 55, move-back 50, hold-position diam
-bersama v1: BREACH_PASSIVE_DRAIN = 15/tick   Integrity awal = 1000   Core HP tier 1 = 1800
-    ICE Sentry I: radius 1 hop, tiap 4 tick, damage 60, akurasi 85%
-    EDGE_LENGTH_MIN/MAX_DU = 200 / 2000   Defense budget tier 1 = 20 pt   1 tick = 50 ms
-```
-
-Bukti kenapa model v1 diganti tetap berlaku sebagai catatan sejarah (peta Entry → Firewall → Core
-yang sama): `[IF node=Firewall, Exploit, Brute Force]` selesai **53 tick**, sedangkan
-`[IF node=Firewall, Brute Force, Exploit]` — isi identik, urutan tertukar — selesai **124 tick**.
-Di v2 dua sheet dengan isi sama dan urutan berbeda tetap bisa berbeda hasilnya, tapi perbedaannya
-sekarang **terbaca di layar**: urutan baris adalah prioritas slot, dan itu tertulis di atas editor.
+19. **`packages/sim`'s `dist/` basi bikin konsumen lain berbohong.** `packages/replay` dan
+    `apps/client` mengimpor `@payload/sim` dari `dist/` **hasil build**, bukan dari `src/`
+    langsung. Mengedit `engine-v2.ts`/`ruleset-v2.ts` lalu langsung menjalankan test
+    `packages/replay` di sesi yang sama akan memakai perilaku LAMA sampai
+    `cd packages/sim && npx tsc -p tsconfig.json` (build penuh, bukan cuma `--noEmit`) dijalankan
+    ulang. Ditemukan waktu menambah field `delta` ke event `virus-split` (8.3e): test replay terus
+    menghitung integrity 0, bukan 0.5, sampai `dist/` di-rebuild.
+20. **`entityId: undefined` bukan byte yang sama dengan kunci yang absen.** `stableStringify`
+    (`determinism.test.ts`) memakai `Object.keys`, jadi `{...event, entityId: undefined}`
+    ter-serialize sebagai `"entityId":undefined` — beda dari kunci yang benar-benar tidak ada.
+    Field opsional pada `BattleEvent` wajib ditulis lewat idiom spread bersyarat
+    (`...(canSplit ? { entityId } : {})`), bukan `entityId: canSplit ? entity.id : undefined`.
+21. **Aksi slot movement mengkredit `rule-fired` begitu barisnya menulis slot itu — terlepas dari
+    apakah virusnya benar-benar bergerak.** `hold-position` sudah begitu sejak lama (disengaja,
+    lihat komentarnya), tapi ini berlaku untuk SEMUA aksi movement, termasuk yang baru (8.4):
+    menaruh `move-toward-core`/`target-strike`/dll di baris yang SAMA dengan aksi kumulatif lain
+    yang ingin diuji "tidak fired ketika tidak berefek" akan membuat baris itu selalu ter-kredit
+    lewat sisi movement-nya, menyembunyikan bug (atau membuat test palsu-hijau) di sisi
+    kumulatifnya. Test yang ingin mengisolasi kredit sebuah aksi kumulatif harus menaruh
+    movement-nya di baris LAIN.
+22. **`core-within-hops` (dan kondisi posisi lain yang membaca lokasi) "melihat ke depan" saat
+    virus di tengah edge — dipakai `location.to`, bukan node asal.** Ini konsisten dengan
+    `node-ahead-is`, tapi menjebak kalau sebuah aksi (mis. `recall`) dipasangkan dengan kondisi ini
+    plus `once`: kondisinya bisa jadi TRUE lebih dulu saat masih di tengah edge menuju node target,
+    men-set niat gerak yang **diantre** (bukan langsung dieksekusi), lalu `once`-nya sudah terpakai
+    — dan niat yang diantre itu kalah dari baris fallback begitu tiba, karena baris fallback selalu
+    menulis ulang slot movement tiap tick. Kalau ingin sebuah aksi baru bereaksi HANYA saat benar-
+    benar berdiri di sebuah node, jangan gabungkan dengan `once` tanpa memeriksa perilaku "lihat ke
+    depan" ini dulu.

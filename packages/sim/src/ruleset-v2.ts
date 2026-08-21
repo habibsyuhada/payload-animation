@@ -87,14 +87,44 @@ export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
   { kind: "took-damage-last-tick", category: "state", weightKb: 90 },
   { kind: "on-breach-node", category: "position", weightKb: 90 },
   { kind: "at-node", category: "position", weightKb: 60 },
+  // v2-only, PLAN.md 8.4 (RULESET.md §10.1 B.1).
+  { kind: "ice-near", category: "sensor", weightKbByTier: { 1: 380, 2: 480, 3: 580 }, radiusHopsByTier: { 1: 1, 2: 2, 3: 3 } },
+  { kind: "scanner-near", category: "sensor", weightKbByTier: { 1: 300, 2: 400, 3: 500 }, radiusHopsByTier: { 1: 1, 2: 2, 3: 3 } },
+  { kind: "core-within-hops", category: "position", weightKb: 200 },
+  { kind: "core-hp-below", category: "state", weightKb: 220 },
+  { kind: "node-hp-below", category: "state", weightKb: 240 },
+  { kind: "blocked-ahead", category: "position", weightKb: 180 },
+  { kind: "visited-here-before", category: "state", weightKb: 160 },
+  { kind: "cloak-ready", category: "state", weightKb: 110 },
+  { kind: "decoy-armed", category: "state", weightKb: 100 },
+  { kind: "slowed", category: "state", weightKb: 90 },
+  { kind: "jammed", category: "state", weightKb: 90 },
+  { kind: "alarm-active", category: "state", weightKb: 100 },
+  { kind: "tick-after", category: "state", weightKb: 100 },
+  { kind: "every-n-ticks", category: "state", weightKb: 120 },
+  { kind: "flag-is", category: "state", weightKb: 80 },
+  { kind: "is-clone", category: "state", weightKb: 80 },
+  { kind: "entity-count-below", category: "state", weightKb: 120 },
 ];
+
+/** Defaults for 8.4's new numeric condition parameters, applied when a row doesn't set one. */
+export const DEFAULT_CORE_WITHIN_HOPS_V2 = 3;
+export const DEFAULT_HP_THRESHOLD_PERMILLE_V2 = 500;
+export const DEFAULT_TICKS_PARAM_V2 = 100;
+export const DEFAULT_FLAG_INDEX_V2 = 0;
+export const DEFAULT_ENTITY_COUNT_V2 = 2;
+/** "every-n-ticks" refuses anything below this (RULESET.md §10.1) — a lower bound the UI and
+ * `validateVirusProgram` both enforce, not just a suggested default. */
+export const MIN_EVERY_N_TICKS_V2 = 5;
+/** How many boolean flags a body carries (RULESET.md §12, PLAN.md B.3) — `flagIndex` runs 0..3. */
+export const FLAG_COUNT_V2 = 4;
 
 /**
  * Which slot an action writes, if any (ADR 0006 §3). Slot actions take the FIRST writer in a
  * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
  * at the bottom must not overwrite the reaction above it.
  */
-export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy";
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate" | "checkpoint" | "sprint" | "spoof" | "overclock" | "emp";
 
 export interface ActionSpec {
   readonly kind: ActionKind;
@@ -121,6 +151,32 @@ export const ACTION_SPECS_V2: readonly ActionSpec[] = [
   { kind: "slow-crawl", category: "stealth", weightKbByTier: { 1: 300, 2: 380, 3: 460 }, slot: "slow-crawl" },
   { kind: "self-repair", category: "utility", weightKbByTier: { 1: 450, 2: 550, 3: 650 } },
   { kind: "arm-decoy", category: "utility", weightKbByTier: { 1: 400, 2: 500, 3: 600 }, slot: "decoy" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c): splits the virus into 2 (tier III: up to
+  // 3) bodies sharing the same sheet. Slot "split" — only the first split row to fire in a tick
+  // takes effect, same first-writer-wins rule as every other slot (ADR 0006 §3).
+  { kind: "worm-split", category: "utility", weightKbByTier: { 1: 1100, 2: 1300, 3: 1500 }, slot: "split" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c): sacrifices this body's entire remaining
+  // Integrity as one-shot damage to the Breach Node it occupies, then dies — a slot (not
+  // cumulative) since detonating twice in one tick is meaningless, the body is only ever "gone" once.
+  { kind: "detonate", category: "attack", weightKbByTier: { 1: 900, 2: 1100, 3: 1300 }, slot: "detonate" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3d): records the node this body is standing on
+  // as its respawn point. A slot — re-setting mid-tick from two rules would be ambiguous about
+  // which node "wins", same first-writer-wins rule as everything else (ADR 0006 §3); re-setting on
+  // a LATER tick simply overwrites the previous checkpoint, no `once` needed.
+  { kind: "set-checkpoint", category: "utility", weightKbByTier: { 1: 600, 2: 750, 3: 900 }, slot: "checkpoint" },
+  // v2-only, PLAN.md 8.4 (RULESET.md §10.2 B.2).
+  { kind: "move-toward-node-type", category: "movement", weightKb: 700, slot: "movement", speedDuPerTick: 50 },
+  // Doesn't itself write the movement slot — like Slow Crawl, it modifies whatever movement action
+  // wins it, so it's categorized by that (a status effect) rather than by its "Gerak" table section.
+  { kind: "sprint", category: "utility", weightKbByTier: { 1: 450, 2: 560, 3: 670 }, slot: "sprint" },
+  { kind: "recall", category: "movement", weightKb: 350, slot: "movement", speedDuPerTick: 50 },
+  { kind: "target-strike", category: "attack", weightKbByTier: { 1: 750, 2: 950, 3: 1150 } },
+  { kind: "emp-burst", category: "attack", weightKbByTier: { 1: 800, 2: 1000, 3: 1200 }, slot: "emp" },
+  { kind: "overclock", category: "attack", weightKbByTier: { 1: 650, 2: 800, 3: 950 }, slot: "overclock" },
+  { kind: "spoof-signature", category: "stealth", weightKbByTier: { 1: 550, 2: 700, 3: 850 }, slot: "spoof" },
+  { kind: "purge", category: "stealth", weightKbByTier: { 1: 400, 2: 500, 3: 600 } },
+  { kind: "siphon", category: "stealth", weightKbByTier: { 1: 500, 2: 620, 3: 740 } },
+  { kind: "set-flag", category: "utility", weightKb: 60 },
 ];
 
 export function getConditionSpec(kind: ConditionKind): ConditionSpec {
@@ -240,8 +296,415 @@ export function getDecoyConfigV2(tier: BlockTier): DecoyConfigV2 {
   return DECOY_CONFIG_V2[tier];
 }
 
+interface WormSplitConfigV2 {
+  /** How many LIVING bodies may exist at once for a split at this tier to be allowed — checked at
+   * the moment the split resolves (PLAN.md 8.3c), not a total-ever-created count. */
+  readonly maxLivingEntities: number;
+  /** ‰ of the splitting body's pre-split Integrity that EACH resulting body ends up with —
+   * "masing-masing", the original body included, not "the new body gets a slice of what's left". */
+  readonly integritySharePermille: number;
+}
+
+const WORM_SPLIT_CONFIG_V2: Readonly<Record<BlockTier, WormSplitConfigV2>> = {
+  1: { maxLivingEntities: 2, integritySharePermille: 500 },
+  2: { maxLivingEntities: 2, integritySharePermille: 600 },
+  3: { maxLivingEntities: 3, integritySharePermille: 650 },
+};
+
+export function getWormSplitConfigV2(tier: BlockTier): WormSplitConfigV2 {
+  return WORM_SPLIT_CONFIG_V2[tier];
+}
+
+/** A split is refused below this much remaining Integrity (RULESET.md §14, PLAN.md 8.3c) — otherwise a body could split itself down to bodies too small to survive a single hit. */
+export const WORM_SPLIT_MIN_INTEGRITY_V2 = 200;
+
+interface DetonateConfigV2 {
+  /** ‰ of the detonating body's remaining Integrity dealt as damage to the Breach Node it occupies. */
+  readonly damageMultiplierPermille: number;
+}
+
+const DETONATE_CONFIG_V2: Readonly<Record<BlockTier, DetonateConfigV2>> = {
+  1: { damageMultiplierPermille: 2000 },
+  2: { damageMultiplierPermille: 2500 },
+  3: { damageMultiplierPermille: 3000 },
+};
+
+export function getDetonateConfigV2(tier: BlockTier): DetonateConfigV2 {
+  return DETONATE_CONFIG_V2[tier];
+}
+
+interface CheckpointConfigV2 {
+  /** Absolute Integrity (not ‰ — RULESET.md §14 states these as flat numbers) a body wakes up with. */
+  readonly respawnIntegrity: number;
+  /** Total respawns this body may use for the rest of the battle. Re-setting the checkpoint at a
+   * different tier overwrites this with the NEW tier's total — it does not add to it. */
+  readonly respawnsTotal: number;
+}
+
+const CHECKPOINT_CONFIG_V2: Readonly<Record<BlockTier, CheckpointConfigV2>> = {
+  1: { respawnIntegrity: 300, respawnsTotal: 1 },
+  2: { respawnIntegrity: 400, respawnsTotal: 1 },
+  3: { respawnIntegrity: 500, respawnsTotal: 2 },
+};
+
+export function getCheckpointConfigV2(tier: BlockTier): CheckpointConfigV2 {
+  return CHECKPOINT_CONFIG_V2[tier];
+}
+
+interface SprintConfigV2 {
+  readonly speedMultiplierPermille: number;
+  readonly integrityCostPerTick: number;
+}
+
+const SPRINT_CONFIG_V2: Readonly<Record<BlockTier, SprintConfigV2>> = {
+  1: { speedMultiplierPermille: 1300, integrityCostPerTick: 6 },
+  2: { speedMultiplierPermille: 1450, integrityCostPerTick: 9 },
+  3: { speedMultiplierPermille: 1600, integrityCostPerTick: 12 },
+};
+
+export function getSprintConfigV2(tier: BlockTier): SprintConfigV2 {
+  return SPRINT_CONFIG_V2[tier];
+}
+
+const TARGET_STRIKE_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 90, 2: 130, 3: 180 };
+
+export function getTargetStrikeDamagePerTickV2(tier: BlockTier): number {
+  return TARGET_STRIKE_DAMAGE_V2[tier];
+}
+
+interface EmpBurstConfigV2 {
+  readonly radiusHops: number;
+  readonly disableDurationTicks: number;
+}
+
+const EMP_BURST_CONFIG_V2: Readonly<Record<BlockTier, EmpBurstConfigV2>> = {
+  1: { radiusHops: 1, disableDurationTicks: 20 },
+  2: { radiusHops: 1, disableDurationTicks: 30 },
+  3: { radiusHops: 2, disableDurationTicks: 40 },
+};
+
+export function getEmpBurstConfigV2(tier: BlockTier): EmpBurstConfigV2 {
+  return EMP_BURST_CONFIG_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2). */
+export const EMP_BURST_COOLDOWN_TICKS_V2 = 120;
+
+interface OverclockConfigV2 {
+  readonly damageMultiplierPermille: number;
+}
+
+const OVERCLOCK_CONFIG_V2: Readonly<Record<BlockTier, OverclockConfigV2>> = {
+  1: { damageMultiplierPermille: 1400 },
+  2: { damageMultiplierPermille: 1550 },
+  3: { damageMultiplierPermille: 1700 },
+};
+
+export function getOverclockConfigV2(tier: BlockTier): OverclockConfigV2 {
+  return OVERCLOCK_CONFIG_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2): the ICE-accuracy cost of running Overclock. */
+export const OVERCLOCK_ICE_ACCURACY_BONUS_PERMILLE_V2 = 150;
+export const OVERCLOCK_DURATION_TICKS_V2 = 20;
+export const OVERCLOCK_COOLDOWN_TICKS_V2 = 90;
+
+const SPOOF_SIGNATURE_DURATION_V2: Readonly<Record<BlockTier, number>> = { 1: 15, 2: 25, 3: 35 };
+
+export function getSpoofSignatureDurationTicksV2(tier: BlockTier): number {
+  return SPOOF_SIGNATURE_DURATION_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2). */
+export const SPOOF_SIGNATURE_COOLDOWN_TICKS_V2 = 100;
+
+const PURGE_DURATION_V2: Readonly<Record<BlockTier, number>> = { 1: 10, 2: 15, 3: 20 };
+
+export function getPurgeDurationTicksV2(tier: BlockTier): number {
+  return PURGE_DURATION_V2[tier];
+}
+
+const SIPHON_LIFESTEAL_PERMILLE_V2: Readonly<Record<BlockTier, number>> = { 1: 300, 2: 400, 3: 500 };
+
+export function getSiphonLifestealPermilleV2(tier: BlockTier): number {
+  return SIPHON_LIFESTEAL_PERMILLE_V2[tier];
+}
+
+/** The five node types `target-strike` can hit (RULESET.md §10.2's own list) — Trap/Honeypot are
+ * already one-shot, Turnstile is explicitly indestructible, Router/Entry/Core are structural. */
+export type DestructibleSupportNodeType = "ice-sentry" | "scanner" | "patch-server" | "jammer" | "alarm";
+
+/**
+ * PLAN.md 8.4: `target-strike` is what finally implements the destructibility RULESET.md §5.1
+ * deferred for these five since v1 — none of them tracked HP before this. ICE Sentry/Scanner never
+ * needed one in v1 either; these are new numbers (softer than a Firewall, reflecting how exposed a
+ * support node is compared to something built to be breached), not migrated from anywhere.
+ */
+const SUPPORT_NODE_HP_V2: Readonly<Record<DestructibleSupportNodeType, Readonly<Record<BlockTier, number>>>> = {
+  "ice-sentry": { 1: 150, 2: 220, 3: 300 },
+  scanner: { 1: 120, 2: 180, 3: 250 },
+  "patch-server": { 1: 200, 2: 300, 3: 400 },
+  jammer: { 1: 180, 2: 260, 3: 340 },
+  alarm: { 1: 200, 2: 300, 3: 400 },
+};
+
+export function getSupportNodeMaxHpV2(type: DestructibleSupportNodeType, tier: BlockTier): number {
+  return SUPPORT_NODE_HP_V2[type][tier];
+}
+
+export function isDestructibleSupportNodeType(type: DefenseNodeType): type is DestructibleSupportNodeType {
+  return type === "ice-sentry" || type === "scanner" || type === "patch-server" || type === "jammer" || type === "alarm";
+}
+
 /** Default threshold for "integrity-below" when a row doesn't carry one (matches v1's tier I). */
 export const DEFAULT_INTEGRITY_THRESHOLD_PERMILLE_V2 = 500;
 
 /** Default target for the two node-type conditions when a row doesn't carry one. */
 export const DEFAULT_CONDITION_TARGET_NODE_TYPES_V2: readonly DefenseNodeType[] = ["firewall"];
+
+/*
+ * --- Defense node tables (v2), ADR 0007 §"Memisah tabel node v2 dari v1 yang beku" ---
+ *
+ * engine-v2.ts used to read these numbers straight out of ruleset.ts (v1, frozen) via nodes/ —
+ * which meant no v2-only node type could ever be added, because the tables it would need to live
+ * in must never change once a "v1" BattleLog depends on them. These tables exist so v2 has numbers
+ * of its own to rebalance (RULESET.md §9's still-open "ICE Nest" fix, PLAN.md 8.2b) without
+ * touching a single byte of ruleset.ts.
+ *
+ * Fase 8 (8.1b) seeds every table below as an EXACT copy of the v1 numbers — this step is pure
+ * plumbing, not a rebalance, so v2 golden log hashes must not move. The five v2-only node types
+ * (patch-server, tarpit, jammer, turnstile, alarm) get their real entries in 8.2a, alongside the
+ * nodes-v2/ modules that read them.
+ */
+
+interface DefenseNodeCostEntryV2 {
+  readonly type: DefenseNodeType;
+  readonly tier?: BlockTier;
+  readonly costPoints: number;
+}
+
+/** Node costs, seeded from RULESET.md §5.1 (same as v1's DEFENSE_NODE_COSTS_V1). */
+const DEFENSE_NODE_COSTS_V2: readonly DefenseNodeCostEntryV2[] = [
+  { type: "router", costPoints: 1 },
+  { type: "entry", costPoints: 0 },
+  { type: "core", costPoints: 0 },
+  { type: "firewall", tier: 1, costPoints: 3 },
+  { type: "firewall", tier: 2, costPoints: 5 },
+  { type: "firewall", tier: 3, costPoints: 8 },
+  { type: "ice-sentry", tier: 1, costPoints: 4 },
+  { type: "ice-sentry", tier: 2, costPoints: 6 },
+  { type: "ice-sentry", tier: 3, costPoints: 9 },
+  { type: "honeypot", tier: 1, costPoints: 3 },
+  { type: "honeypot", tier: 2, costPoints: 5 },
+  { type: "honeypot", tier: 3, costPoints: 8 },
+  { type: "scanner", tier: 1, costPoints: 2 },
+  { type: "scanner", tier: 2, costPoints: 3 },
+  { type: "scanner", tier: 3, costPoints: 5 },
+  { type: "trap", tier: 1, costPoints: 2 },
+  { type: "trap", tier: 2, costPoints: 3 },
+  { type: "trap", tier: 3, costPoints: 5 },
+  // Five v2-only node types (RULESET.md §14, ADR 0007 §A) — 8.2a.
+  { type: "patch-server", tier: 1, costPoints: 3 },
+  { type: "patch-server", tier: 2, costPoints: 4 },
+  { type: "patch-server", tier: 3, costPoints: 6 },
+  { type: "tarpit", tier: 1, costPoints: 2 },
+  { type: "tarpit", tier: 2, costPoints: 3 },
+  { type: "tarpit", tier: 3, costPoints: 4 },
+  { type: "jammer", tier: 1, costPoints: 3 },
+  { type: "jammer", tier: 2, costPoints: 4 },
+  { type: "jammer", tier: 3, costPoints: 6 },
+  { type: "turnstile", tier: 1, costPoints: 2 },
+  { type: "turnstile", tier: 2, costPoints: 3 },
+  { type: "turnstile", tier: 3, costPoints: 4 },
+  { type: "alarm", tier: 1, costPoints: 4 },
+  { type: "alarm", tier: 2, costPoints: 5 },
+  { type: "alarm", tier: 3, costPoints: 7 },
+];
+
+export function getDefenseNodeCostV2(type: DefenseNodeType, tier?: BlockTier): number {
+  const entry = DEFENSE_NODE_COSTS_V2.find((candidate) => candidate.type === type && candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 defense node cost for type "${type}" tier ${tier ?? "(untiered)"}`);
+  }
+  return entry.costPoints;
+}
+
+/** All Breach nodes (Firewall, Core) take this much HP loss per tick from mere occupancy — seeded from BREACH_PASSIVE_DRAIN_V1 (RULESET.md §5.0). */
+export const BREACH_PASSIVE_DRAIN_V2 = 15;
+
+interface FirewallConfigV2 {
+  readonly tier: BlockTier;
+  readonly hp: number;
+  readonly counterDamagePerTick: number;
+}
+
+const FIREWALL_CONFIG_V2: readonly FirewallConfigV2[] = [
+  { tier: 1, hp: 500, counterDamagePerTick: 20 },
+  { tier: 2, hp: 800, counterDamagePerTick: 30 },
+  { tier: 3, hp: 1200, counterDamagePerTick: 45 },
+];
+
+export function getFirewallConfigV2(tier: BlockTier): FirewallConfigV2 {
+  const entry = FIREWALL_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 firewall config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface IceSentryConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly fireIntervalTicks: number;
+  readonly damage: number;
+  readonly accuracyPermille: number;
+}
+
+const ICE_SENTRY_CONFIG_V2: readonly IceSentryConfigV2[] = [
+  { tier: 1, radiusHops: 1, fireIntervalTicks: 4, damage: 60, accuracyPermille: 850 },
+  { tier: 2, radiusHops: 1, fireIntervalTicks: 3, damage: 85, accuracyPermille: 880 },
+  { tier: 3, radiusHops: 2, fireIntervalTicks: 3, damage: 115, accuracyPermille: 900 },
+];
+
+export function getIceSentryConfigV2(tier: BlockTier): IceSentryConfigV2 {
+  const entry = ICE_SENTRY_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 ICE Sentry config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface ScannerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly durationTicks: number;
+  readonly iceAccuracyBonusPermille: number;
+}
+
+const SCANNER_CONFIG_V2: readonly ScannerConfigV2[] = [
+  { tier: 1, radiusHops: 1, durationTicks: 6, iceAccuracyBonusPermille: 150 },
+  { tier: 2, radiusHops: 2, durationTicks: 8, iceAccuracyBonusPermille: 200 },
+  { tier: 3, radiusHops: 2, durationTicks: 10, iceAccuracyBonusPermille: 250 },
+];
+
+export function getScannerConfigV2(tier: BlockTier): ScannerConfigV2 {
+  const entry = SCANNER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 scanner config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const TRAP_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 180, 2: 260, 3: 350 };
+
+export function getTrapDamageV2(tier: BlockTier): number {
+  return TRAP_DAMAGE_V2[tier];
+}
+
+/*
+ * --- Five v2-only node types (RULESET.md §14, ADR 0007 §A) — 8.2a ---
+ * Each answers an attacker archetype the six v1 node types don't: grind (Patch Server heals
+ * through it), slow-crawl-immune sprinting (Tarpit), sensor-reliant sheets (Jammer), backtracking
+ * (Turnstile), and escalation the sheet can't out-scan (Alarm Relay).
+ */
+
+interface PatchServerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly healPerTick: number;
+}
+
+const PATCH_SERVER_CONFIG_V2: readonly PatchServerConfigV2[] = [
+  { tier: 1, radiusHops: 1, healPerTick: 8 },
+  { tier: 2, radiusHops: 1, healPerTick: 12 },
+  { tier: 3, radiusHops: 2, healPerTick: 18 },
+];
+
+export function getPatchServerConfigV2(tier: BlockTier): PatchServerConfigV2 {
+  const entry = PATCH_SERVER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 patch-server config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface TarpitConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  /** Not additive with a second Tarpit in range — the strongest (lowest ‰) active one applies. */
+  readonly speedMultiplierPermille: number;
+}
+
+const TARPIT_CONFIG_V2: readonly TarpitConfigV2[] = [
+  { tier: 1, radiusHops: 1, speedMultiplierPermille: 600 },
+  { tier: 2, radiusHops: 1, speedMultiplierPermille: 500 },
+  { tier: 3, radiusHops: 2, speedMultiplierPermille: 400 },
+];
+
+export function getTarpitConfigV2(tier: BlockTier): TarpitConfigV2 {
+  const entry = TARPIT_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 tarpit config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface JammerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  /** Tier III also falsifies `node-ahead-is` while jammed — not just the two sensor conditions. */
+  readonly jamsNodeAhead: boolean;
+}
+
+const JAMMER_CONFIG_V2: readonly JammerConfigV2[] = [
+  { tier: 1, radiusHops: 1, jamsNodeAhead: false },
+  { tier: 2, radiusHops: 2, jamsNodeAhead: false },
+  { tier: 3, radiusHops: 2, jamsNodeAhead: true },
+];
+
+export function getJammerConfigV2(tier: BlockTier): JammerConfigV2 {
+  const entry = JAMMER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 jammer config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface TurnstileConfigV2 {
+  readonly lockoutTicks: number;
+}
+
+const TURNSTILE_CONFIG_V2: Readonly<Record<BlockTier, TurnstileConfigV2>> = {
+  1: { lockoutTicks: 40 },
+  2: { lockoutTicks: 70 },
+  3: { lockoutTicks: 110 },
+};
+
+export function getTurnstileConfigV2(tier: BlockTier): TurnstileConfigV2 {
+  return TURNSTILE_CONFIG_V2[tier];
+}
+
+interface AlarmConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly alertDurationTicks: number;
+}
+
+const ALARM_CONFIG_V2: readonly AlarmConfigV2[] = [
+  { tier: 1, radiusHops: 1, alertDurationTicks: 120 },
+  { tier: 2, radiusHops: 2, alertDurationTicks: 180 },
+  { tier: 3, radiusHops: 2, alertDurationTicks: 240 },
+];
+
+export function getAlarmConfigV2(tier: BlockTier): AlarmConfigV2 {
+  const entry = ALARM_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 alarm config for tier ${tier}`);
+  }
+  return entry;
+}
+
+/** The alert's boost to every ICE Sentry on the map, RULESET.md §14 — flat across tiers; only
+ * radius and duration scale with Alarm Relay's own tier. */
+export const ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS = 1;
+export const ALARM_ICE_ACCURACY_BONUS_PERMILLE = 100;

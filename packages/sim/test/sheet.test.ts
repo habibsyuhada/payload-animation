@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RULESET_V2, SHEET_EVENT_ROW_KB_V2, getActionWeightKb, getConditionWeightKb } from "../src/ruleset-v2.js";
-import { countSheetEvents, sheetDepth, sheetHasMovementAction, sheetWeightKb, validateVirusProgram, walkSheet } from "../src/sheet.js";
+import { countSheetEvents, sheetCanSplit, sheetDepth, sheetHasMovementAction, sheetWeightKb, validateVirusProgram, walkSheet } from "../src/sheet.js";
 import type { SheetEvent, VirusProgram } from "../src/types.js";
 
 function row(partial: Partial<SheetEvent> = {}): SheetEvent {
@@ -80,6 +80,23 @@ describe("validateVirusProgram", () => {
     expect(validateVirusProgram(bad, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-threshold");
   });
 
+  it("rejects 8.4's new condition/action parameters outside their stated ranges", () => {
+    const badHops: VirusProgram = { events: [row({ conditions: [{ kind: "core-within-hops", hops: 9 }] })] };
+    expect(validateVirusProgram(badHops, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const tooFrequent: VirusProgram = { events: [row({ conditions: [{ kind: "every-n-ticks", ticks: 2 }] })] };
+    expect(validateVirusProgram(tooFrequent, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badFlagIndex: VirusProgram = { events: [row({ conditions: [{ kind: "flag-is", flagIndex: 7 }] })] };
+    expect(validateVirusProgram(badFlagIndex, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badCount: VirusProgram = { events: [row({ conditions: [{ kind: "entity-count-below", count: 9 }] })] };
+    expect(validateVirusProgram(badCount, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badActionFlagIndex: VirusProgram = { events: [row({ actions: [{ kind: "self-repair", tier: 1, flagIndex: 7 }] })] };
+    expect(validateVirusProgram(badActionFlagIndex, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+  });
+
   it("warns — but does not block — a sheet that never moves (ADR 0006's beginner trap)", () => {
     const parked: VirusProgram = { events: [row({ actions: [{ kind: "brute-force", tier: 1 }] })] };
     const result = validateVirusProgram(parked, RULESET_V2, 1);
@@ -92,5 +109,16 @@ describe("validateVirusProgram", () => {
     expect(validateVirusProgram({ events: [] }, RULESET_V2, 1).warnings.map((warning) => warning.code)).toContain("empty-sheet");
     const withDeadRow: VirusProgram = { events: [row({ actions: [{ kind: "move-toward-core" }] }), row()] };
     expect(validateVirusProgram(withDeadRow, RULESET_V2, 1).warnings.map((warning) => warning.code)).toContain("unreachable-row");
+  });
+});
+
+describe("sheetCanSplit", () => {
+  it("is false for a sheet with no worm-split row anywhere", () => {
+    expect(sheetCanSplit(MOVER)).toBe(false);
+  });
+
+  it("is true when a worm-split action is nested, even deep in the tree", () => {
+    const nested: VirusProgram = { events: [row({ children: [row({ children: [row({ actions: [{ kind: "worm-split", tier: 1 }] })] })] })] };
+    expect(sheetCanSplit(nested)).toBe(true);
   });
 });

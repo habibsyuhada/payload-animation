@@ -1,5 +1,5 @@
 import { DEFENSE_ARCHETYPES, VIRUS_ARCHETYPES } from "./archetypes.js";
-import { isDominanceClean, renderDominanceSection, searchDominance } from "./dominance.js";
+import { isBandedDominanceClean, renderBandedDominanceSection, searchDominanceByBand } from "./dominance.js";
 import { isFlagged, renderMarkdownReport } from "./report.js";
 import { runMatchup } from "./run-matchup.js";
 import { generatePopulation, describeSheet, type GeneratedVirus } from "./sheet-generator.js";
@@ -28,16 +28,16 @@ function main(): void {
     DEFENSE_ARCHETYPES.map((defense, defenseIndex) => runMatchup(virus, defense, SAMPLE_SIZE, (virusIndex * DEFENSE_ARCHETYPES.length + defenseIndex) * SAMPLE_SIZE)),
   );
 
-  // The hand-written five are part of the cast, not a separate experiment: "is there a defense
+  // The hand-written eight are part of the cast, not a separate experiment: "is there a defense
   // nothing can beat?" is only answerable against everything we have, and a designed archetype
   // that dominates is exactly as much of a problem as a generated one.
   const population = [...VIRUS_ARCHETYPES.map(asGenerated), ...generatePopulation(GENERATOR_SEED, POPULATION_SIZE)];
-  const dominance = searchDominance(population, DEFENSE_ARCHETYPES, DOMINANCE_SAMPLE_SIZE, DOMINANCE_SEED_BASE);
+  const bands = searchDominanceByBand(population, DEFENSE_ARCHETYPES, DOMINANCE_SAMPLE_SIZE, DOMINANCE_SEED_BASE);
 
-  const report = `${renderMarkdownReport(VIRUS_ARCHETYPES, DEFENSE_ARCHETYPES, results, SAMPLE_SIZE)}\n${renderDominanceSection(dominance)}`;
+  const report = `${renderMarkdownReport(VIRUS_ARCHETYPES, DEFENSE_ARCHETYPES, results, SAMPLE_SIZE)}\n${renderBandedDominanceSection(bands)}`;
   process.stdout.write(`${report}\n`);
 
-  if (results.filter(isFlagged).length > 0 || !isDominanceClean(dominance)) {
+  if (results.filter(isFlagged).length > 0 || !isBandedDominanceClean(bands)) {
     process.exitCode = 1;
   }
 }

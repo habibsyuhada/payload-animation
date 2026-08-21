@@ -1,6 +1,6 @@
 import type { DefenseNodeType } from "@payload/sim";
 import { easeOutBack, easeOutCubic, mix, type Vec2 } from "./ease.js";
-import { findNode, findTrack, samplePosition, type Timeline, type TimelineMarker } from "./compile.js";
+import { entityIdForTrackId, findNode, findTrack, samplePosition, trackIdForEntity, type EntityTrack, type Timeline, type TimelineMarker } from "./compile.js";
 
 /**
  * draw.ts — PLAN.md §2 contract: `drawFrame(timeline, T, ctx)`, a PURE function of (timeline, T).
@@ -36,6 +36,10 @@ export interface DrawContext2D {
   rotate(angle: number): void;
 }
 
+// Colors/radii mirrored by hand in apps/client's defenseNodeCatalog.ts (same values — see that
+// file's header for why it's a duplicate, not an import: eslint boundaries forbid app -> replay
+// internals). The five v2-only types (RULESET.md §14, PLAN.md 8.2a) were seeded here as router's
+// placeholder colors in 8.1a purely to keep these Records exhaustive; these are their real values.
 const NODE_COLOR: Record<DefenseNodeType, string> = {
   entry: "#7fd8a0",
   router: "#5b6478",
@@ -45,6 +49,11 @@ const NODE_COLOR: Record<DefenseNodeType, string> = {
   scanner: "#b05ae0",
   trap: "#e05a9c",
   core: "#ffd75a",
+  "patch-server": "#5ae08a",
+  tarpit: "#8a6a3a",
+  jammer: "#7a5ae0",
+  turnstile: "#5b6478",
+  alarm: "#e07a2a",
 };
 
 const NODE_RADIUS: Record<DefenseNodeType, number> = {
@@ -56,6 +65,11 @@ const NODE_RADIUS: Record<DefenseNodeType, number> = {
   scanner: 10,
   trap: 10,
   core: 22,
+  "patch-server": 9,
+  tarpit: 9,
+  jammer: 9,
+  turnstile: 8,
+  alarm: 10,
 };
 
 /** GDD §11: "gelap (near-black biru)" — also the erase color every frame draws over (see
@@ -154,14 +168,19 @@ function activeEffectMarkers(timeline: Timeline, t: number): TimelineMarker[] {
   return timeline.markers.filter((marker) => marker.t <= t && t - marker.t <= EFFECT_WINDOW_SECONDS);
 }
 
-function drawEffects(timeline: Timeline, t: number, virusPosition: Vec2, ctx: DrawContext2D): void {
+/**
+ * Effects that are about a DEFENSE node, not any specific body (PLAN.md 8.3e): drawn once per
+ * frame regardless of how many bodies are alive, at the source node's own position. A Trap/
+ * Honeypot/Core hit, or a status change (Scanner aura, Alarm Relay), looks the same no matter which
+ * body triggered it — drawing this once per entity, like the ICE tracer below has to, would stack
+ * identical bursts on top of each other.
+ */
+function drawSharedEffects(timeline: Timeline, t: number, ctx: DrawContext2D): void {
   for (const marker of activeEffectMarkers(timeline, t)) {
     const progress = (t - marker.t) / EFFECT_WINDOW_SECONDS;
     const node = findNode(timeline, marker.nodeId);
 
-    if (marker.kind === "damage" && node?.type === "ice-sentry") {
-      drawTracer(node.position, virusPosition, progress, ctx);
-    } else if (marker.kind === "damage" && (node?.type === "trap" || node?.type === "honeypot")) {
+    if (marker.kind === "damage" && (node?.type === "trap" || node?.type === "honeypot")) {
       drawBurst(node.position, progress, NODE_COLOR[node.type], ctx);
     } else if (marker.kind === "damage" && node?.type === "core") {
       drawBurst(node.position, progress, NODE_COLOR.core, ctx);
@@ -171,11 +190,22 @@ function drawEffects(timeline: Timeline, t: number, virusPosition: Vec2, ctx: Dr
   }
 }
 
-function drawVirusTrail(timeline: Timeline, t: number, fallback: Vec2, ctx: DrawContext2D): void {
-  const track = findTrack(timeline, "virus");
-  if (!track) {
-    return;
+/** The ICE Sentry tracer IS about a specific body — it snaps to wherever THAT body actually is,
+ * so it has to be drawn once per entity rather than shared like `drawSharedEffects`. A marker with
+ * no `entityId` (a log that never splits) defaults to entity 0, the only body such a log ever has. */
+function drawIceTracer(timeline: Timeline, entityId: number, t: number, virusPosition: Vec2, ctx: DrawContext2D): void {
+  for (const marker of activeEffectMarkers(timeline, t)) {
+    if (marker.kind !== "damage" || (marker.entityId ?? 0) !== entityId) {
+      continue;
+    }
+    const node = findNode(timeline, marker.nodeId);
+    if (node?.type === "ice-sentry") {
+      drawTracer(node.position, virusPosition, (t - marker.t) / EFFECT_WINDOW_SECONDS, ctx);
+    }
   }
+}
+
+function drawVirusTrail(track: EntityTrack, t: number, fallback: Vec2, ctx: DrawContext2D): void {
   for (let step = TRAIL_STEPS; step >= 1; step -= 1) {
     const sampleT = t - step * TRAIL_STEP_SECONDS;
     if (sampleT < 0) {
@@ -192,27 +222,51 @@ function drawVirusTrail(timeline: Timeline, t: number, fallback: Vec2, ctx: Draw
   }
 }
 
-function drawVirus(timeline: Timeline, t: number, ctx: DrawContext2D): void {
-  const track = findTrack(timeline, "virus");
+/**
+ * This body's own most recent "became dead" tick as of T, or undefined if it's currently alive —
+ * derived from its Integrity track rather than a `died` marker (PLAN.md 8.3e), because only a
+ * respawning body's death gets an explicit per-entity `died` marker at all (RULESET.md §13); a
+ * body that just dies outright never does. Walking the Integrity keyframes works for both: it
+ * resets to "alive" the moment a later positive keyframe appears (a repair or a `set-checkpoint`
+ * respawn), so a body that comes back stops reading as dead without needing to know which of those
+ * two reasons brought it back.
+ */
+function deathTickFor(timeline: Timeline, entityId: number, t: number): number | undefined {
+  const track = timeline.virusIntegrityByEntity.get(entityId);
+  if (!track) {
+    return undefined;
+  }
+  let deathTick: number | undefined;
+  for (const keyframe of track) {
+    if (keyframe.t > t) {
+      break;
+    }
+    deathTick = keyframe.value <= 0 ? keyframe.t : undefined;
+  }
+  return deathTick;
+}
+
+function drawVirusBody(timeline: Timeline, entityId: number, t: number, ctx: DrawContext2D): void {
+  const track = findTrack(timeline, trackIdForEntity(entityId));
   if (!track) {
     return;
   }
   const fallback = timeline.nodes[0]?.position ?? { x: 0, y: 0 };
-  const died = timeline.markers.find((marker) => marker.kind === "died");
-  if (died && t >= died.t) {
-    if (t - died.t <= EFFECT_WINDOW_SECONDS) {
-      drawBurst(samplePosition(track, died.t, fallback), (t - died.t) / EFFECT_WINDOW_SECONDS, "#ff5a5a", ctx);
+  const deathTick = deathTickFor(timeline, entityId, t);
+  if (deathTick !== undefined) {
+    if (t - deathTick <= EFFECT_WINDOW_SECONDS) {
+      drawBurst(samplePosition(track, deathTick, fallback), (t - deathTick) / EFFECT_WINDOW_SECONDS, "#ff5a5a", ctx);
     }
-    return; // virus is gone — nothing more to draw for it.
+    return; // this body is gone — nothing more to draw for it.
   }
 
-  drawVirusTrail(timeline, t, fallback, ctx);
+  drawVirusTrail(track, t, fallback, ctx);
 
   const basePosition = samplePosition(track, t, fallback);
   const wobble = Math.sin(t * WOBBLE_FREQUENCY_HZ * Math.PI * 2) * WOBBLE_AMPLITUDE_PX;
   const position: Vec2 = { x: basePosition.x, y: basePosition.y + wobble };
 
-  drawEffects(timeline, t, position, ctx);
+  drawIceTracer(timeline, entityId, t, position, ctx);
 
   ctx.save();
   ctx.fillStyle = VIRUS_COLOR;
@@ -221,7 +275,10 @@ function drawVirus(timeline: Timeline, t: number, ctx: DrawContext2D): void {
   ctx.arc(position.x, position.y, VIRUS_RADIUS, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+}
 
+/** Battle-level, drawn once regardless of how many bodies are still standing when it happens. */
+function drawWinBurst(timeline: Timeline, t: number, ctx: DrawContext2D): void {
   const won = timeline.markers.find((marker) => marker.kind === "won");
   if (won && t >= won.t && t - won.t <= EFFECT_WINDOW_SECONDS) {
     const core = timeline.nodes.find((node) => node.type === "core");
@@ -238,5 +295,9 @@ export function drawFrame(timeline: Timeline, t: number, ctx: DrawContext2D): vo
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   drawEdges(timeline, ctx);
   drawNodes(timeline, t, ctx);
-  drawVirus(timeline, t, ctx);
+  drawSharedEffects(timeline, t, ctx);
+  for (const track of timeline.tracks) {
+    drawVirusBody(timeline, entityIdForTrackId(track.id), t, ctx);
+  }
+  drawWinBurst(timeline, t, ctx);
 }

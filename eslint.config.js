@@ -45,7 +45,10 @@ export default [
           rules: [
             { from: "sim", allow: [] },
             { from: "replay", allow: ["sim"] },
-            { from: "shared", allow: [] },
+            // PLAN.md 8.6, ADR 0009: research's unlock keys ARE sim's ConditionKind/ActionKind/
+            // DefenseNodeType — retyping them in `shared` would recreate the katalog-cermin
+            // sheetCatalog.ts deliberately avoids. One direction only: `sim` never imports `shared`.
+            { from: "shared", allow: ["sim"] },
             { from: "ui", allow: ["shared"] },
             { from: "app", allow: ["sim", "replay", "shared", "ui"] },
             { from: "tool", allow: ["sim", "replay", "shared"] },

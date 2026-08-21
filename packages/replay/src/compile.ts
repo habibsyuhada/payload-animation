@@ -33,7 +33,7 @@ export interface EntityTrack {
  * "node-hit" is the mirror image — damage the virus dealt TO a node, which is what chewing
  * through a Firewall or draining the Core looks like. Keeping them apart matters: a renderer that
  * confused the two would draw the Core's own HP loss as if the virus had been shot. */
-export type TimelineMarkerKind = "damage" | "node-hit" | "destroyed" | "died" | "won" | "timeout" | "status";
+export type TimelineMarkerKind = "damage" | "node-hit" | "destroyed" | "died" | "won" | "timeout" | "status" | "respawned";
 
 export interface TimelineMarker {
   readonly t: number;
@@ -45,6 +45,10 @@ export interface TimelineMarker {
    * show a combat number without parsing it back out of `label` (where the leading token is the
    * actor's node id, not the amount). */
   readonly amount?: number;
+  /** PLAN.md 8.3e: which body this marker is about, mirrored straight from the source `BattleEvent`
+   * — absent under the exact same `sheetCanSplit()` gate as everything on `BattleEvent` itself, so
+   * a single-body log's markers are byte-identical to before this field existed. */
+  readonly entityId?: number;
 }
 
 /**
@@ -76,16 +80,36 @@ export interface Timeline {
   readonly durationSeconds: number;
   readonly nodes: readonly StaticNode[];
   readonly edges: readonly StaticEdge[];
+  /** One track per body — `"virus"` for entity 0 (present even for a log that never splits, same
+   * as before this field carried more than one), `"virus:N"` for N >= 1 (PLAN.md 8.3e). */
   readonly tracks: readonly EntityTrack[];
   readonly markers: readonly TimelineMarker[];
-  /** The virus's health over time, as a 0..1 ratio of its starting Integrity — what a health bar
-   * renders from. Compiled from the log's own damage/repair deltas, never recomputed. */
+  /** Entity 0's health over time, as a 0..1 ratio of its starting Integrity — what a health bar
+   * renders from. Compiled from the log's own damage/repair deltas, never recomputed. Kept as its
+   * own field (rather than folded into `virusIntegrityByEntity`) so every caller written before
+   * multi-entity existed keeps compiling and behaving identically for a log that never splits. */
   readonly virusIntegrity: readonly Keyframe<number>[];
+  /** The same track, per body (PLAN.md 8.3e) — `virusIntegrity` above is this map's entry for
+   * entity 0. A body born via `worm-split` gets a synthetic keyframe at the tick it's born, so its
+   * health bar doesn't read 100% until its first hit (`compileVirusIntegrityTracks`'s doc). */
+  readonly virusIntegrityByEntity: ReadonlyMap<number, readonly Keyframe<number>[]>;
   /** The Core's health over time, same 0..1 shape. The battle is won when this hits 0, so it is
    * the other half of the story a health bar tells. */
   readonly coreHp: readonly Keyframe<number>[];
   /** Empty for every v1 log — the engine that produced them has no rules to fire. */
   readonly ruleFirings: readonly RuleFiring[];
+}
+
+/** `"virus"` for entity 0 (unchanged from before multi-entity existed), `"virus:N"` for N >= 1
+ * (PLAN.md 8.3e) — every existing consumer's `findTrack(timeline, "virus")` keeps finding exactly
+ * the track it always did. */
+export function trackIdForEntity(entityId: number): string {
+  return entityId === 0 ? "virus" : `virus:${entityId}`;
+}
+
+/** Inverse of `trackIdForEntity` — every `Timeline.tracks` entry's `id` round-trips through this. */
+export function entityIdForTrackId(trackId: string): number {
+  return trackId === "virus" ? 0 : Number(trackId.slice("virus:".length));
 }
 
 /**
@@ -97,23 +121,65 @@ export interface Timeline {
  */
 const VIRUS_START_INTEGRITY = 1000;
 
-/** Health-over-time, replayed from the events rather than simulated: every `virus-damaged` and
- * `virus-repaired` delta is applied in order, giving one keyframe per change. Damage lands on the
- * tick it happened — no easing into it — so a hit reads as a hit rather than a slow drain. */
-function compileVirusIntegrityTrack(events: readonly BattleEvent[]): Keyframe<number>[] {
-  const keyframes: Keyframe<number>[] = [{ t: 0, value: 1 }];
-  let integrity = VIRUS_START_INTEGRITY;
+/**
+ * Health-over-time, per body, replayed from the events rather than simulated: every
+ * `virus-damaged`/`virus-repaired` delta is applied in order, giving one keyframe per change.
+ * `virus-died` (either role, PLAN.md 8.3d — the battle-ending one or a body's own) zeroes it
+ * outright; `virus-respawned` and `virus-split` set it directly to their `delta`, which is already
+ * the resulting absolute Integrity (not an amount to add — see those two events' own docs).
+ * Damage lands on the tick it happened — no easing into it — so a hit reads as a hit rather than a
+ * slow drain.
+ *
+ * Grouped by `event.entityId ?? 0`: for a log that never splits every event has no `entityId`, so
+ * this collapses to exactly the single "entity 0" track the pre-8.3e version compiled — same
+ * keyframes, same order, same values.
+ */
+function compileVirusIntegrityTracks(events: readonly BattleEvent[]): Map<number, Keyframe<number>[]> {
+  const byEntity = new Map<number, Keyframe<number>[]>();
+  const integrityByEntity = new Map<number, number>();
+  const trackFor = (entityId: number): Keyframe<number>[] => {
+    let keyframes = byEntity.get(entityId);
+    if (!keyframes) {
+      keyframes = [{ t: 0, value: 1 }];
+      byEntity.set(entityId, keyframes);
+      integrityByEntity.set(entityId, VIRUS_START_INTEGRITY);
+    }
+    return keyframes;
+  };
+  trackFor(0); // Entity 0 always gets a track, even an empty-of-damage one — matches pre-8.3e shape.
+
   for (const event of events) {
+    if (event.type === "virus-split") {
+      // Two effects at once: the SPLITTING body's own Integrity drops to `delta` (a normal
+      // keyframe on its existing track), and the NEW body is born with that same value — its track
+      // starts at the split tick, not a fictitious t=0 full-health entry it never actually had.
+      const parentId = event.entityId ?? 0;
+      const parentIntegrity = event.delta ?? 0;
+      trackFor(parentId).push({ t: event.tick * TICK_SECONDS, value: parentIntegrity / VIRUS_START_INTEGRITY });
+      integrityByEntity.set(parentId, parentIntegrity);
+      const childId = Number(event.target);
+      byEntity.set(childId, [{ t: event.tick * TICK_SECONDS, value: parentIntegrity / VIRUS_START_INTEGRITY }]);
+      integrityByEntity.set(childId, parentIntegrity);
+      continue;
+    }
+    if (event.type !== "virus-damaged" && event.type !== "virus-repaired" && event.type !== "virus-died" && event.type !== "virus-respawned") {
+      continue;
+    }
+    const entityId = event.entityId ?? 0;
+    const keyframes = trackFor(entityId);
+    let integrity = integrityByEntity.get(entityId)!;
     if (event.type === "virus-damaged" || event.type === "virus-repaired") {
       integrity = Math.max(0, Math.min(VIRUS_START_INTEGRITY, integrity + (event.delta ?? 0)));
     } else if (event.type === "virus-died") {
       integrity = 0;
     } else {
-      continue;
+      // virus-respawned: delta is already the resulting absolute Integrity.
+      integrity = event.delta ?? 0;
     }
+    integrityByEntity.set(entityId, integrity);
     keyframes.push({ t: event.tick * TICK_SECONDS, value: integrity / VIRUS_START_INTEGRITY });
   }
-  return keyframes;
+  return byEntity;
 }
 
 /** Node id -> screen position. Layout is provided by the caller (e.g. Defense Grid's saved node positions) — compileTimeline never invents one. */
@@ -130,18 +196,46 @@ function layoutPosition(layout: Layout, nodeIdText: string | undefined): Vec2 {
   return position;
 }
 
-function compileVirusPositionTrack(events: readonly BattleEvent[], layout: Layout): Keyframe<Vec2>[] {
-  const keyframes: Keyframe<Vec2>[] = [];
-  for (const event of events) {
-    if (event.type !== "virus-entered-node" && event.type !== "virus-departed-node") {
-      continue;
+/**
+ * Position-over-time, per body (PLAN.md 8.3e). Grouped by `event.entityId ?? 0`, so a log that
+ * never splits collapses to the single "entity 0" track the pre-8.3e version compiled — same
+ * keyframes, same order, same values. Without this grouping, mixing every body's arrivals into one
+ * list would read as one virus teleporting between locations rather than several bodies each
+ * moving on their own.
+ *
+ * A body born via `worm-split` gets one synthetic keyframe at the split tick, sampled from its
+ * PARENT's own track at that instant — it's born exactly where its parent was, not wherever the
+ * caller's fallback position happens to be until its own first move.
+ */
+function compileVirusPositionTracks(events: readonly BattleEvent[], layout: Layout): Map<number, Keyframe<Vec2>[]> {
+  const byEntity = new Map<number, Keyframe<Vec2>[]>();
+  const trackFor = (entityId: number): Keyframe<Vec2>[] => {
+    let keyframes = byEntity.get(entityId);
+    if (!keyframes) {
+      keyframes = [];
+      byEntity.set(entityId, keyframes);
     }
-    // "entered" keyframes land on the arrival node, "departed" on the node just left — placed
-    // back-to-back this naturally produces a hold (two keyframes at the same position, while the
-    // virus dwells) followed by a move (interpolating to the next arrival), with no extra logic.
-    keyframes.push({ t: event.tick * TICK_SECONDS, value: layoutPosition(layout, event.target) });
+    return keyframes;
+  };
+  trackFor(0); // Entity 0 always gets a track, even an empty one — matches pre-8.3e shape.
+
+  for (const event of events) {
+    if (event.type === "virus-entered-node" || event.type === "virus-departed-node") {
+      // "entered" keyframes land on the arrival node, "departed" on the node just left — placed
+      // back-to-back this naturally produces a hold (two keyframes at the same position, while the
+      // body dwells) followed by a move (interpolating to the next arrival), with no extra logic.
+      trackFor(event.entityId ?? 0).push({ t: event.tick * TICK_SECONDS, value: layoutPosition(layout, event.target) });
+    } else if (event.type === "virus-split") {
+      const parentFrames = byEntity.get(event.entityId ?? 0);
+      if (!parentFrames || parentFrames.length === 0) {
+        continue; // Shouldn't happen — the parent has existed since before tick 0 — but stay pure rather than throw.
+      }
+      const splitT = event.tick * TICK_SECONDS;
+      const birthPosition = sampleKeyframes(parentFrames, splitT, mixVec2, parentFrames[parentFrames.length - 1]!.value);
+      trackFor(Number(event.target)).push({ t: splitT, value: birthPosition });
+    }
   }
-  return keyframes;
+  return byEntity;
 }
 
 const MARKER_KIND_BY_EVENT: Partial<Record<BattleEventType, TimelineMarkerKind>> = {
@@ -153,6 +247,12 @@ const MARKER_KIND_BY_EVENT: Partial<Record<BattleEventType, TimelineMarkerKind>>
   "battle-timeout": "timeout",
   "status-applied": "status",
   "decoy-absorbed": "status",
+  // PLAN.md 8.3d — its own kind, not "status": draw.ts needs to tell "came back" apart from every
+  // other status change to know a body's most recent death has been undone.
+  "virus-respawned": "respawned",
+  // "virus-split" is deliberately UNMAPPED: its `target`/`actor` are entity ids, not node ids, and
+  // `resolveMarkerNodeId` below would happily (and wrongly) resolve one if a defense node happened
+  // to share that same small integer. No marker for it yet is more honest than a wrong one.
 };
 
 function describeEvent(event: BattleEvent): string {
@@ -171,6 +271,8 @@ function describeEvent(event: BattleEvent): string {
       return `${event.actor} status applied`;
     case "decoy-absorbed":
       return `${event.actor} absorbed by decoy`;
+    case "virus-respawned":
+      return `virus respawns at node ${event.target}`;
     default:
       return event.type;
   }
@@ -202,7 +304,14 @@ function compileMarkers(events: readonly BattleEvent[], nodeIds: ReadonlySet<num
     }
     const nodeId = resolveMarkerNodeId(event, nodeIds);
     const amount = event.delta === undefined ? undefined : Math.abs(event.delta);
-    markers.push({ t: event.tick * TICK_SECONDS, kind, label: describeEvent(event), ...(nodeId !== undefined ? { nodeId } : {}), ...(amount !== undefined ? { amount } : {}) });
+    markers.push({
+      t: event.tick * TICK_SECONDS,
+      kind,
+      label: describeEvent(event),
+      ...(nodeId !== undefined ? { nodeId } : {}),
+      ...(amount !== undefined ? { amount } : {}),
+      ...(event.entityId !== undefined ? { entityId: event.entityId } : {}),
+    });
   }
   return markers;
 }
@@ -240,18 +349,20 @@ export function compileTimeline(log: BattleLog, layout: Layout): Timeline {
     ...(node.tier !== undefined ? { tier: node.tier } : {}),
     position: layoutPosition(layout, String(node.id)),
   }));
-  const virusTrack: EntityTrack = {
-    id: "virus",
-    position: compileVirusPositionTrack(log.events, layout),
-    opacity: [],
-  };
+
+  const positionsByEntity = compileVirusPositionTracks(log.events, layout);
+  const tracks: EntityTrack[] = [...positionsByEntity.entries()].sort(([a], [b]) => a - b).map(([entityId, position]) => ({ id: trackIdForEntity(entityId), position, opacity: [] }));
+
+  const virusIntegrityByEntity = compileVirusIntegrityTracks(log.events);
+
   return {
     durationSeconds: (lastEvent?.tick ?? 0) * TICK_SECONDS,
     nodes: staticNodes,
     edges: log.input.defense.edges.map((edge) => ({ from: edge.from, to: edge.to })),
-    tracks: [virusTrack],
+    tracks,
     markers: compileMarkers(log.events, new Set(staticNodes.map((node) => node.id))),
-    virusIntegrity: compileVirusIntegrityTrack(log.events),
+    virusIntegrity: virusIntegrityByEntity.get(0) ?? [{ t: 0, value: 1 }],
+    virusIntegrityByEntity,
     coreHp: compileCoreHpTrack(log),
     ruleFirings: compileRuleFirings(log.events),
   };
@@ -288,6 +399,13 @@ function sampleStep(keyframes: readonly Keyframe<number>[], t: number): number {
 /** The virus's health at T, as a 0..1 ratio of what it started with. */
 export function sampleIntegrity(timeline: Timeline, t: number): number {
   return sampleStep(timeline.virusIntegrity, t);
+}
+
+/** A specific body's health at T (PLAN.md 8.3e) — 1 (full) for an entity id the log never
+ * mentions, e.g. one that hasn't been born yet at this T. */
+export function sampleIntegrityFor(timeline: Timeline, entityId: number, t: number): number {
+  const track = timeline.virusIntegrityByEntity.get(entityId);
+  return track ? sampleStep(track, t) : 1;
 }
 
 /** The Core's health at T, as a 0..1 ratio of what it started with. */

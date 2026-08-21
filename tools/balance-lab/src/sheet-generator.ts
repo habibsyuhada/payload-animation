@@ -1,6 +1,8 @@
 import {
   ACTION_SPECS_V2,
   CONDITION_SPECS_V2,
+  FLAG_COUNT_V2,
+  MIN_EVERY_N_TICKS_V2,
   RULESET_V2,
   SHEET_EVENT_ROW_KB_V2,
   createRng,
@@ -36,7 +38,9 @@ import type { VirusArchetype } from "./archetypes.js";
 const CONDITION_KINDS: readonly ConditionKind[] = CONDITION_SPECS_V2.map((spec) => spec.kind);
 const ACTION_KINDS: readonly ActionKind[] = ACTION_SPECS_V2.map((spec) => spec.kind);
 const MOVEMENT_KINDS: readonly ActionKind[] = ACTION_SPECS_V2.filter((spec) => spec.category === "movement" && spec.kind !== "hold-position").map((spec) => spec.kind);
-const NODE_TYPES: readonly DefenseNodeType[] = ["firewall", "ice-sentry", "honeypot", "scanner", "trap", "router", "core"];
+// PLAN.md 8.8: the full v2 target-able set (RULESET.md §14) — everything a sheet might name in
+// `node-here-is`/`node-ahead-is`/`move-toward-node-type`, minus `entry` (never a useful target).
+const NODE_TYPES: readonly DefenseNodeType[] = ["firewall", "ice-sentry", "honeypot", "scanner", "trap", "router", "core", "patch-server", "tarpit", "jammer", "turnstile", "alarm"];
 const TIERS: readonly BlockTier[] = [1, 2, 3];
 const ONCE_SCOPES: readonly (SheetEvent["once"] | undefined)[] = [undefined, undefined, undefined, "battle", "node", "arrival"];
 
@@ -51,14 +55,27 @@ function randomCondition(rng: Rng): SheetCondition {
     // NOT on roughly a quarter of conditions — common enough to be explored, rare enough that
     // most generated rules still read the obvious way round.
     ...(rng.nextInt(4) === 0 ? { negate: true } : {}),
-    ...(kind === "honeypot-near" || kind === "trap-near" ? { tier: pick(rng, TIERS) } : {}),
+    ...(kind === "honeypot-near" || kind === "trap-near" || kind === "ice-near" || kind === "scanner-near" ? { tier: pick(rng, TIERS) } : {}),
     ...(kind === "node-here-is" || kind === "node-ahead-is" ? { targetNodeTypes: [pick(rng, NODE_TYPES)] } : {}),
     ...(kind === "integrity-below" ? { integrityThresholdPermille: (rng.nextInt(17) + 2) * 50 } : {}),
+    // PLAN.md 8.4/8.8 — parameters the v1-era generator never had to cover.
+    ...(kind === "core-within-hops" ? { hops: rng.nextInt(5) + 1 } : {}),
+    ...(kind === "core-hp-below" || kind === "node-hp-below" ? { thresholdPermille: (rng.nextInt(17) + 2) * 50 } : {}),
+    ...(kind === "tick-after" ? { ticks: (rng.nextInt(20) + 1) * 25 } : {}),
+    ...(kind === "every-n-ticks" ? { ticks: MIN_EVERY_N_TICKS_V2 + rng.nextInt(20) * 5 } : {}),
+    ...(kind === "flag-is" ? { flagIndex: rng.nextInt(FLAG_COUNT_V2) } : {}),
+    ...(kind === "entity-count-below" ? { count: rng.nextInt(2) + 2 } : {}),
   };
 }
 
 function randomAction(rng: Rng): SheetAction {
-  return { kind: pick(rng, ACTION_KINDS), tier: pick(rng, TIERS) };
+  const kind = pick(rng, ACTION_KINDS);
+  return {
+    kind,
+    tier: pick(rng, TIERS),
+    ...(kind === "move-toward-node-type" ? { targetNodeTypes: [pick(rng, NODE_TYPES)] } : {}),
+    ...(kind === "set-flag" ? { flagIndex: rng.nextInt(FLAG_COUNT_V2), flagValue: rng.nextInt(2) === 0 } : {}),
+  };
 }
 
 function conditionCost(condition: SheetCondition): number {

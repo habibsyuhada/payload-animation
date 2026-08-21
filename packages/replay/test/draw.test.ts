@@ -200,3 +200,52 @@ describe("drawFrame", () => {
 });
 
 const NODE_RADIUS_CORE_BASELINE = 22; // Core's resting radius — a burst arc should exceed it.
+
+/** PLAN.md 8.3e: Entry(1) -> Router(2, hub, splits+holds there) -> Core(3). Two bodies, neither
+ * ever hurt (nothing on this map can hurt them), so both are still alive and drawable at any T. */
+const SPLIT_GRAPH: DefenseGraph = {
+  nodes: [
+    { id: 1, type: "entry" },
+    { id: 2, type: "router" },
+    { id: 3, type: "core" },
+  ] satisfies DefenseNode[],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 3,
+  coreHp: 100000, // never actually reached — this fixture is about drawing bodies, not winning.
+};
+const SPLIT_LAYOUT: Layout = { positions: { 1: { x: 0, y: 0 }, 2: { x: 200, y: 0 }, 3: { x: 500, y: 0 } } };
+const SPLIT_INPUT: BattleInput = {
+  rulesetVersion: "v2",
+  seed: 7,
+  virus: {
+    events: [
+      { once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }], children: [] },
+      { conditions: [], actions: [{ kind: "move-toward-core" }], children: [] },
+    ],
+  },
+  defense: SPLIT_GRAPH,
+};
+
+describe("drawFrame — multi-entity (PLAN.md 8.3e)", () => {
+  it("draws a fill circle for every living body, not just entity 0", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    const ctx = new RecordingContext();
+    // Well after the split (0.35s), both bodies are moving and alive.
+    drawFrame(timeline, 0.6, ctx);
+    const virusFillCalls = ctx.calls.filter((call) => call.op === "fill" && (call.args[0] as { fillStyle: string }).fillStyle === "#eaf6ff");
+    expect(virusFillCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("is still a pure function of (timeline, T) with two bodies on screen", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    const ctxA = new RecordingContext();
+    const ctxB = new RecordingContext();
+    drawFrame(timeline, 0.6, ctxA);
+    drawFrame(timeline, 0.6, ctxB);
+    expect(ctxA.calls).toEqual(ctxB.calls);
+  });
+});

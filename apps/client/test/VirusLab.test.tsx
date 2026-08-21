@@ -1,19 +1,36 @@
+import { RESEARCH_TREE } from "@payload/shared";
 import { page } from "@vitest/browser/context";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirusLab } from "../src/screens/VirusLab.js";
+import { useResearchStore } from "../src/state/researchStore.js";
 import { rowIdByRulePath, toVirusProgram, useVirusLabStore } from "../src/state/virusLabStore.js";
 
 let container: HTMLDivElement;
 let root: Root;
 
+/** These tests are about the editor and the v2 catalog, not about research gating (that lives in
+ * research-gating.test.tsx) — so the default fixture has everything researched, matching how the
+ * catalog behaved before PLAN.md 8.7 introduced unlocks. */
+function unlockEverything(): void {
+  useResearchStore.setState({ data: 0, completed: RESEARCH_TREE.map((node) => node.id), claimed: {} });
+}
+
 beforeEach(() => {
   useVirusLabStore.getState().reset();
+  unlockEverything();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  flushSync(() => root.render(<VirusLab />));
+  flushSync(() =>
+    root.render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <VirusLab />
+      </MemoryRouter>,
+    ),
+  );
 });
 
 afterEach(() => {
@@ -94,6 +111,47 @@ describe("VirusLab — event sheet editor (V7.3)", () => {
     const budgetText = await findByTestId("budget-text");
     // 40 + 800 + 1100 (Brute Force III).
     expect(budgetText.textContent).toContain("1940 / 2400 KB");
+  });
+
+  it("edits a condition's int parameter (PLAN.md 8.4) and compiles it through to the sheet", async () => {
+    await pickInto(0, "condition", "core-within-hops");
+    await waitForCount("sheet-condition", 1);
+    const hopsInput = page.getByTestId("sheet-condition-hops").elements()[0]! as HTMLInputElement;
+    expect(hopsInput.value).toBe("3"); // DEFAULT_CORE_WITHIN_HOPS_V2
+
+    const inputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    inputSetter.call(hopsInput, "2");
+    hopsInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      const condition = toVirusProgram(useVirusLabStore.getState().rows).events[0]!.conditions[0]!;
+      if (condition.hops !== 2) {
+        throw new Error("hops not updated yet");
+      }
+    });
+  });
+
+  it("gives set-flag both of its parameters (PLAN.md 8.4's two-parameter chip) and compiles both", async () => {
+    await pickInto(0, "action", "set-flag");
+    await waitForCount("sheet-action", 2);
+    const flagIndexInput = page.getByTestId("sheet-action-flag-index").elements()[0]! as HTMLInputElement;
+    const flagValueSelect = page.getByTestId("sheet-action-flag-value").elements()[0]! as HTMLSelectElement;
+    expect(flagIndexInput.value).toBe("0");
+    expect(flagValueSelect.value).toBe("on");
+
+    const inputSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    inputSetter.call(flagIndexInput, "2");
+    flagIndexInput.dispatchEvent(new Event("change", { bubbles: true }));
+    const selectSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!;
+    selectSetter.call(flagValueSelect, "off");
+    flagValueSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      const action = toVirusProgram(useVirusLabStore.getState().rows).events[0]!.actions.find((candidate) => candidate.kind === "set-flag");
+      if (!action || action.flagIndex !== 2 || action.flagValue !== false) {
+        throw new Error("set-flag params not updated yet");
+      }
+    });
   });
 
   it("negates a condition in place rather than offering a separate NOT block", async () => {

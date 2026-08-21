@@ -36,11 +36,14 @@ describe("dominance flagging", () => {
   });
 
   it("lets CI pass on a finding already recorded in known-dominance.ts, but never on a new one", () => {
+    // An explicit fixture rather than the real KNOWN_DOMINANCE — that list is meant to be empty
+    // (PLAN.md 8.8's own acceptance bar), so this test can't depend on it holding anything.
+    const hypotheticallyKnown = { viruses: [], defenses: [{ name: "ICE Nest", reason: "hypothetical fixture for this test only" }] };
     const known = reportWith({ dominantDefenses: [{ name: "ICE Nest", bestCaseAttackerWinrate: 0 }] });
-    expect(hasUnexpectedFindings(unexpectedFindings(known))).toBe(false);
+    expect(hasUnexpectedFindings(unexpectedFindings(known, hypotheticallyKnown))).toBe(false);
 
     const fresh = reportWith({ dominantDefenses: [{ name: "Firewall Wall", bestCaseAttackerWinrate: 0.1 }] });
-    const findings = unexpectedFindings(fresh);
+    const findings = unexpectedFindings(fresh, hypotheticallyKnown);
     expect(hasUnexpectedFindings(findings)).toBe(true);
     expect(findings.defenses.map((defense) => defense.name)).toEqual(["Firewall Wall"]);
   });
@@ -54,11 +57,13 @@ describe("dominance flagging", () => {
 });
 
 describe("renderDominanceSection", () => {
-  it("says plainly when nothing was found, and lists what is already tracked", () => {
+  it("says plainly when nothing was found", () => {
     const rendered = renderDominanceSection(reportWith({ results: new Array(4).fill(null) }));
     expect(rendered).toContain("No generated sheet beat every defense archetype.");
     expect(rendered).toContain("No defense archetype held every generated sheet below the floor.");
-    expect(rendered).toContain("known-dominance.ts");
+    // known-dominance.ts is empty as of PLAN.md 8.8 (the last entry, ICE Nest, is resolved — see
+    // known-dominance.ts's own doc comment) — nothing for the "known and tracked" footer to show.
+    expect(rendered).not.toContain("known-dominance.ts");
   });
 
   it("names a flagged build and quotes its sheet, so the finding is actionable without a re-run", () => {

@@ -1,8 +1,10 @@
 import {
+  FLAG_COUNT_V2,
   getActionSpec,
   getActionWeightKb,
   getConditionWeightKb,
   MAX_SHEET_DEPTH_V2,
+  MIN_EVERY_N_TICKS_V2,
   SHEET_EVENT_ROW_KB_V2,
 } from "./ruleset-v2.js";
 import { getAccountTierConfig } from "./ruleset.js";
@@ -73,7 +75,17 @@ export function sheetHasMovementAction(program: VirusProgram): boolean {
   return walkSheet(program.events).some(({ event }) => event.actions.some((action) => getActionSpec(action.kind).slot === "movement"));
 }
 
-export type ProgramValidationErrorCode = "too-deep" | "too-many-events" | "payload-budget-exceeded" | "unknown-kind" | "invalid-threshold";
+/**
+ * True if any row anywhere in the sheet contains a `worm-split` action — decided once, before
+ * tick 0 (PLAN.md 8.3b, ADR 0008), and used as the static gate for whether `BattleEvent.entityId`
+ * is written at all. A sheet's event shape must not depend on whether a split actually happens
+ * later in a given battle, only on whether the sheet *can* split.
+ */
+export function sheetCanSplit(program: VirusProgram): boolean {
+  return walkSheet(program.events).some(({ event }) => event.actions.some((action) => action.kind === "worm-split"));
+}
+
+export type ProgramValidationErrorCode = "too-deep" | "too-many-events" | "payload-budget-exceeded" | "unknown-kind" | "invalid-threshold" | "invalid-parameter";
 export type ProgramValidationWarningCode = "no-movement-action" | "empty-sheet" | "unreachable-row";
 
 export interface ProgramValidationIssue {
@@ -112,6 +124,27 @@ export function validateVirusProgram(program: VirusProgram, ruleset: Ruleset, ac
       const threshold = condition.integrityThresholdPermille;
       if (threshold !== undefined && (!Number.isInteger(threshold) || threshold < 0 || threshold > 1000)) {
         errors.push({ code: "invalid-threshold", message: `baris ${visit.path}: threshold ${threshold}‰ di luar 0–1000‰`, path: visit.path });
+      }
+      // PLAN.md 8.4's new condition parameters, each with its own stated range.
+      if (condition.thresholdPermille !== undefined && (!Number.isInteger(condition.thresholdPermille) || condition.thresholdPermille < 0 || condition.thresholdPermille > 1000)) {
+        errors.push({ code: "invalid-threshold", message: `baris ${visit.path}: threshold ${condition.thresholdPermille}‰ di luar 0–1000‰`, path: visit.path });
+      }
+      if (condition.hops !== undefined && (!Number.isInteger(condition.hops) || condition.hops < 1 || condition.hops > 5)) {
+        errors.push({ code: "invalid-parameter", message: `baris ${visit.path}: hops ${condition.hops} di luar 1–5`, path: visit.path });
+      }
+      if (condition.kind === "every-n-ticks" && condition.ticks !== undefined && (!Number.isInteger(condition.ticks) || condition.ticks < MIN_EVERY_N_TICKS_V2)) {
+        errors.push({ code: "invalid-parameter", message: `baris ${visit.path}: every-n-ticks minimal ${MIN_EVERY_N_TICKS_V2} tick`, path: visit.path });
+      }
+      if (condition.flagIndex !== undefined && (!Number.isInteger(condition.flagIndex) || condition.flagIndex < 0 || condition.flagIndex >= FLAG_COUNT_V2)) {
+        errors.push({ code: "invalid-parameter", message: `baris ${visit.path}: flagIndex ${condition.flagIndex} di luar 0–${FLAG_COUNT_V2 - 1}`, path: visit.path });
+      }
+      if (condition.count !== undefined && (!Number.isInteger(condition.count) || condition.count < 2 || condition.count > 3)) {
+        errors.push({ code: "invalid-parameter", message: `baris ${visit.path}: count ${condition.count} di luar 2–3`, path: visit.path });
+      }
+    }
+    for (const action of visit.event.actions) {
+      if (action.flagIndex !== undefined && (!Number.isInteger(action.flagIndex) || action.flagIndex < 0 || action.flagIndex >= FLAG_COUNT_V2)) {
+        errors.push({ code: "invalid-parameter", message: `baris ${visit.path}: flagIndex ${action.flagIndex} di luar 0–${FLAG_COUNT_V2 - 1}`, path: visit.path });
       }
     }
     if (visit.event.conditions.length === 0 && visit.event.actions.length === 0 && visit.event.children.length === 0) {

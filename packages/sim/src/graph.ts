@@ -6,7 +6,8 @@ import {
   getAccountTierConfig,
   getDefenseNodeCost,
 } from "./ruleset.js";
-import type { AccountTierConfig, DefenseGraph, Ruleset } from "./types.js";
+import { getDefenseNodeCostV2 } from "./ruleset-v2.js";
+import type { AccountTierConfig, BlockTier, DefenseGraph, DefenseNodeType, Ruleset } from "./types.js";
 
 /** Undirected adjacency list — virus movement (incl. Backtrack) can traverse edges both ways. */
 export function buildAdjacency(graph: DefenseGraph): Map<number, number[]> {
@@ -170,6 +171,7 @@ export type GraphValidationErrorCode =
   | "self-loop-edge"
   | "edge-length-out-of-range"
   | "unreachable-entry"
+  | "unsupported-node-type"
   | "budget-exceeded"
   | "core-hp-mismatch";
 
@@ -184,17 +186,50 @@ export interface GraphValidationResult {
   readonly errors: readonly GraphValidationError[];
 }
 
+interface DefenseTopologyRules {
+  readonly entryNodeCount: number;
+  readonly coreNodeCount: number;
+  readonly edgeLengthMinDu: number;
+  readonly edgeLengthMaxDu: number;
+  /** Throws for a type (or type/tier combo) this ruleset version has no price for — the ONE source
+   * of truth for "does this ruleset know this node", rather than a separately maintained Set that
+   * could drift out of sync with the cost table itself. */
+  readonly nodeCost: (type: DefenseNodeType, tier?: BlockTier) => number;
+}
+
+/**
+ * The version-aware seam `validateDefenseGraph` was missing (ADR 0007): it already took a
+ * `Ruleset` parameter but every constant inside the function ignored it and read straight from
+ * v1's frozen `ruleset.ts`. Topology itself (entry/core counts, edge length bounds) is unchanged
+ * between v1 and v2 by design (RULESET.md §10 preamble: "yang tidak berubah dari v1 ... §6" is
+ * implied by omission — nothing in §10-§13 revises it), so the v2 branch deliberately reuses v1's
+ * topology constants rather than duplicating numbers that were never meant to diverge. Node costs
+ * DO diverge (v2 adds five node types over 8.2a/8.2b), so those come from the v2 table.
+ */
+function topologyRulesFor(ruleset: Ruleset): DefenseTopologyRules {
+  return {
+    entryNodeCount: ENTRY_NODE_COUNT_V1,
+    coreNodeCount: CORE_NODE_COUNT_V1,
+    edgeLengthMinDu: EDGE_LENGTH_MIN_DU,
+    edgeLengthMaxDu: EDGE_LENGTH_MAX_DU,
+    nodeCost: ruleset.version === "v2" ? getDefenseNodeCostV2 : getDefenseNodeCost,
+  };
+}
+
 /**
  * Enforces docs/RULESET.md §6: exactly 1 Core, exactly 2 Entry nodes each reachable to Core,
- * edge lengths within [200, 2000] DU, and total placed-node cost within the account's Defense
- * Budget. Structurally-broken edges (dangling refs, self-loops) are reported but excluded from
- * the adjacency graph used for reachability, so one bad edge doesn't mask every other check.
+ * edge lengths within [200, 2000] DU, every node a type the ruleset version actually knows, and
+ * total placed-node cost within the account's Defense Budget. Structurally-broken edges (dangling
+ * refs, self-loops) are reported but excluded from the adjacency graph used for reachability, and
+ * unsupported-type nodes are reported but excluded from the cost sum — one bad node doesn't mask
+ * every other check (same philosophy as the edge handling below).
  */
 export function validateDefenseGraph(
   graph: DefenseGraph,
   ruleset: Ruleset,
   accountTier: AccountTierConfig["tier"],
 ): GraphValidationResult {
+  const topology = topologyRulesFor(ruleset);
   const errors: GraphValidationError[] = [];
   const nodeIds = new Set<number>();
 
@@ -207,10 +242,10 @@ export function validateDefenseGraph(
   }
 
   const coreNodes = graph.nodes.filter((node) => node.type === "core");
-  if (coreNodes.length !== CORE_NODE_COUNT_V1) {
+  if (coreNodes.length !== topology.coreNodeCount) {
     errors.push({
       code: "wrong-core-count",
-      message: `expected exactly ${CORE_NODE_COUNT_V1} core node, found ${coreNodes.length}`,
+      message: `expected exactly ${topology.coreNodeCount} core node, found ${coreNodes.length}`,
     });
   } else if (coreNodes[0]!.id !== graph.coreNodeId) {
     errors.push({
@@ -221,10 +256,10 @@ export function validateDefenseGraph(
   }
 
   const entryNodes = graph.nodes.filter((node) => node.type === "entry");
-  if (entryNodes.length !== ENTRY_NODE_COUNT_V1 || graph.entryNodeIds.length !== ENTRY_NODE_COUNT_V1) {
+  if (entryNodes.length !== topology.entryNodeCount || graph.entryNodeIds.length !== topology.entryNodeCount) {
     errors.push({
       code: "wrong-entry-count",
-      message: `expected exactly ${ENTRY_NODE_COUNT_V1} entry nodes, found ${entryNodes.length} node(s) of type "entry" and ${graph.entryNodeIds.length} id(s) in entryNodeIds`,
+      message: `expected exactly ${topology.entryNodeCount} entry nodes, found ${entryNodes.length} node(s) of type "entry" and ${graph.entryNodeIds.length} id(s) in entryNodeIds`,
     });
   } else {
     const entryNodeIdSet = new Set(entryNodes.map((node) => node.id));
@@ -244,15 +279,15 @@ export function validateDefenseGraph(
       errors.push({ code: "invalid-edge-reference", message: `edge ${edge.from}->${edge.to} references a node that does not exist` });
       continue;
     }
-    if (!Number.isInteger(edge.lengthDu) || edge.lengthDu < EDGE_LENGTH_MIN_DU || edge.lengthDu > EDGE_LENGTH_MAX_DU) {
+    if (!Number.isInteger(edge.lengthDu) || edge.lengthDu < topology.edgeLengthMinDu || edge.lengthDu > topology.edgeLengthMaxDu) {
       errors.push({
         code: "edge-length-out-of-range",
-        message: `edge ${edge.from}->${edge.to} length ${edge.lengthDu} DU is outside [${EDGE_LENGTH_MIN_DU}, ${EDGE_LENGTH_MAX_DU}]`,
+        message: `edge ${edge.from}->${edge.to} length ${edge.lengthDu} DU is outside [${topology.edgeLengthMinDu}, ${topology.edgeLengthMaxDu}]`,
       });
     }
   }
 
-  if (coreNodes.length === CORE_NODE_COUNT_V1) {
+  if (coreNodes.length === topology.coreNodeCount) {
     for (const entry of entryNodes) {
       if (!isReachable(graph, entry.id, graph.coreNodeId)) {
         errors.push({ code: "unreachable-entry", message: `entry node ${entry.id} has no path to core`, nodeId: entry.id });
@@ -261,7 +296,21 @@ export function validateDefenseGraph(
   }
 
   const tierConfig = getAccountTierConfig(ruleset, accountTier);
-  const totalCost = graph.nodes.reduce((sum, node) => sum + getDefenseNodeCost(node.type, node.tier), 0);
+  let totalCost = 0;
+  for (const node of graph.nodes) {
+    try {
+      totalCost += topology.nodeCost(node.type, node.tier);
+    } catch {
+      // getDefenseNodeCost(V2) throws for a type/tier this ruleset version has no price for — this
+      // used to crash validateDefenseGraph outright (ADR 0007's "bug laten"); reported instead, and
+      // excluded from the sum below, so it doesn't mask every other check on the same graph.
+      errors.push({
+        code: "unsupported-node-type",
+        message: `node ${node.id} has type "${node.type}"${node.tier !== undefined ? ` tier ${node.tier}` : ""}, which ruleset ${ruleset.version} does not know how to cost`,
+        nodeId: node.id,
+      });
+    }
+  }
   if (totalCost > tierConfig.defenseBudgetPoints) {
     errors.push({
       code: "budget-exceeded",

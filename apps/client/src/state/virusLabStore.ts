@@ -1,4 +1,18 @@
-import { MAX_SHEET_DEPTH_V2, type ActionKind, type BlockTier, type ConditionKind, type DefenseNodeType, type OnceScope, type SheetEvent, type VirusProgram } from "@payload/sim";
+import {
+  DEFAULT_CORE_WITHIN_HOPS_V2,
+  DEFAULT_ENTITY_COUNT_V2,
+  DEFAULT_FLAG_INDEX_V2,
+  DEFAULT_HP_THRESHOLD_PERMILLE_V2,
+  DEFAULT_TICKS_PARAM_V2,
+  MAX_SHEET_DEPTH_V2,
+  type ActionKind,
+  type BlockTier,
+  type ConditionKind,
+  type DefenseNodeType,
+  type OnceScope,
+  type SheetEvent,
+  type VirusProgram,
+} from "@payload/sim";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { highestIdSuffix, persistStorage, storageKey } from "./localPersist.js";
@@ -27,12 +41,28 @@ export interface ConditionInstance {
   readonly tier: BlockTier;
   readonly targetNodeType: DefenseNodeType;
   readonly integrityThresholdPermille: number;
+  /** "core-within-hops" only. */
+  readonly hops: number;
+  /** "core-hp-below" / "node-hp-below" only — a distinct field from `integrityThresholdPermille`
+   * because the sim itself keeps them as separate `SheetCondition` fields (types.ts). */
+  readonly thresholdPermille: number;
+  /** "tick-after" / "every-n-ticks" only. */
+  readonly ticks: number;
+  /** "flag-is" only. */
+  readonly flagIndex: number;
+  /** "entity-count-below" only. */
+  readonly count: number;
 }
 
 export interface ActionInstance {
   readonly id: string;
   readonly kind: ActionKind;
   readonly tier: BlockTier;
+  /** "move-toward-node-type" only — the picker only ever offers one type at a time. */
+  readonly targetNodeType: DefenseNodeType;
+  /** "set-flag" only. */
+  readonly flagIndex: number;
+  readonly flagValue: boolean;
 }
 
 export interface RowInstance {
@@ -56,6 +86,7 @@ export interface VirusLabState {
   readonly removeAction: (rowId: string, actionId: string) => void;
   readonly moveAction: (rowId: string, actionId: string, direction: "up" | "down") => void;
   readonly setActionTier: (rowId: string, actionId: string, tier: BlockTier) => void;
+  readonly updateAction: (rowId: string, actionId: string, patch: Partial<Omit<ActionInstance, "id" | "kind">>) => void;
   readonly reset: () => void;
 }
 
@@ -75,11 +106,23 @@ export function newRow(partial: Partial<Omit<RowInstance, "id">> = {}): RowInsta
 }
 
 export function newCondition(kind: ConditionKind): ConditionInstance {
-  return { id: newInstanceId("cond"), kind, negate: false, tier: 1, targetNodeType: "firewall", integrityThresholdPermille: 500 };
+  return {
+    id: newInstanceId("cond"),
+    kind,
+    negate: false,
+    tier: 1,
+    targetNodeType: "firewall",
+    integrityThresholdPermille: 500,
+    hops: DEFAULT_CORE_WITHIN_HOPS_V2,
+    thresholdPermille: DEFAULT_HP_THRESHOLD_PERMILLE_V2,
+    ticks: DEFAULT_TICKS_PARAM_V2,
+    flagIndex: DEFAULT_FLAG_INDEX_V2,
+    count: DEFAULT_ENTITY_COUNT_V2,
+  };
 }
 
 export function newAction(kind: ActionKind): ActionInstance {
-  return { id: newInstanceId("act"), kind, tier: 1 };
+  return { id: newInstanceId("act"), kind, tier: 1, targetNodeType: "firewall", flagIndex: DEFAULT_FLAG_INDEX_V2, flagValue: true };
 }
 
 /**
@@ -197,6 +240,14 @@ export const useVirusLabStore = create<VirusLabState>()(
       setActionTier: (rowId, actionId, tier) =>
         set((state) => ({ rows: mapRow(state.rows, rowId, (row) => ({ ...row, actions: row.actions.map((action) => (action.id === actionId ? { ...action, tier } : action)) })) })),
 
+      updateAction: (rowId, actionId, patch) =>
+        set((state) => ({
+          rows: mapRow(state.rows, rowId, (row) => ({
+            ...row,
+            actions: row.actions.map((action) => (action.id === actionId ? { ...action, ...patch } : action)),
+          })),
+        })),
+
       reset: () => set({ rows: starterSheet() }),
     }),
     {
@@ -226,13 +277,29 @@ function toSheetCondition(condition: ConditionInstance): SheetEvent["conditions"
     ...(conditionIsTiered(condition.kind) ? { tier: condition.tier } : {}),
     ...(condition.kind === "node-here-is" || condition.kind === "node-ahead-is" ? { targetNodeTypes: [condition.targetNodeType] } : {}),
     ...(condition.kind === "integrity-below" ? { integrityThresholdPermille: condition.integrityThresholdPermille } : {}),
+    // v2-only, PLAN.md 8.4.
+    ...(condition.kind === "core-within-hops" ? { hops: condition.hops } : {}),
+    ...(condition.kind === "core-hp-below" || condition.kind === "node-hp-below" ? { thresholdPermille: condition.thresholdPermille } : {}),
+    ...(condition.kind === "tick-after" || condition.kind === "every-n-ticks" ? { ticks: condition.ticks } : {}),
+    ...(condition.kind === "flag-is" ? { flagIndex: condition.flagIndex } : {}),
+    ...(condition.kind === "entity-count-below" ? { count: condition.count } : {}),
+  };
+}
+
+function toSheetAction(action: ActionInstance): SheetEvent["actions"][number] {
+  return {
+    kind: action.kind,
+    tier: action.tier,
+    // v2-only, PLAN.md 8.4.
+    ...(action.kind === "move-toward-node-type" ? { targetNodeTypes: [action.targetNodeType] } : {}),
+    ...(action.kind === "set-flag" ? { flagIndex: action.flagIndex, flagValue: action.flagValue } : {}),
   };
 }
 
 function toSheetEvent(row: RowInstance): SheetEvent {
   return {
     conditions: row.conditions.map(toSheetCondition),
-    actions: row.actions.map((action) => ({ kind: action.kind, tier: action.tier })),
+    actions: row.actions.map(toSheetAction),
     children: row.children.map(toSheetEvent),
     ...(row.once !== null ? { once: row.once } : {}),
   };

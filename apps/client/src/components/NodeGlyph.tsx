@@ -23,6 +23,17 @@ function starPoints(cx: number, cy: number, outerR: number, innerR: number, spik
   return points.join(" ");
 }
 
+/** Vertices of an equal-armed plus (Patch Server — RULESET.md §14): a 12-point cross outline. */
+function plusPoints(cx: number, cy: number, r: number): string {
+  const arm = r * 0.4;
+  const reach = r * 1.1;
+  const corners: [number, number][] = [
+    [arm, reach], [-arm, reach], [-arm, arm], [-reach, arm], [-reach, -arm], [-arm, -arm],
+    [-arm, -reach], [arm, -reach], [arm, -arm], [reach, -arm], [reach, arm], [arm, arm],
+  ];
+  return corners.map(([dx, dy]) => `${cx + dx},${cy + dy}`).join(" ");
+}
+
 export interface NodeGlyphProps {
   readonly shape: NodeShape;
   readonly cx: number;
@@ -55,6 +66,25 @@ export function NodeGlyph({ shape, cx, cy, r, fill, stroke, strokeWidth }: NodeG
       return <polygon points={regularPolygonPoints(cx, cy, r * 1.05, 8, -67.5)} {...common} />;
     case "star":
       return <polygon points={starPoints(cx, cy, r * 1.3, r * 0.55, 6, -90)} {...common} />;
+    // v2-only node types (RULESET.md §14, PLAN.md 8.2a):
+    case "plus":
+      return <polygon points={plusPoints(cx, cy, r)} {...common} />;
+    case "pentagon":
+      return <polygon points={regularPolygonPoints(cx, cy, r * 1.1, 5, -90)} {...common} />;
+    case "burst":
+      return <polygon points={starPoints(cx, cy, r * 1.15, r * 0.75, 8, -90)} {...common} />;
+    case "bar": {
+      const halfWidth = r * 1.15;
+      const halfHeight = r * 0.4;
+      return <rect x={cx - halfWidth} y={cy - halfHeight} width={halfWidth * 2} height={halfHeight * 2} rx={2} {...common} />;
+    }
+    case "ring":
+      return (
+        <>
+          <circle cx={cx} cy={cy} r={r * 0.75} fill="none" stroke={fill} strokeWidth={r * 0.5} />
+          <circle cx={cx} cy={cy} r={r * 1.05} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+        </>
+      );
     case "circle":
     default:
       return <circle cx={cx} cy={cy} r={r} {...common} />;

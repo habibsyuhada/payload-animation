@@ -71,7 +71,48 @@ export type ConditionKind =
   /** The virus is occupying a Breach Node (Firewall/Core) — Self Repair's other v1 hidden gate. */
   | "on-breach-node"
   /** The virus is standing on a node rather than crossing an edge. */
-  | "at-node";
+  | "at-node"
+  // v2-only, PLAN.md 8.4 — sensors (tiered, like honeypot-near/trap-near).
+  /** A live ICE Sentry, off its fire cooldown right now, within radius. */
+  | "ice-near"
+  /** A live Scanner within radius. */
+  | "scanner-near"
+  // v2-only, PLAN.md 8.4 — position & network (flat).
+  /** Core is within `hops` hops of the current node (or the node this edge leads to, mid-transit). */
+  | "core-within-hops"
+  /** Core's remaining HP is below `thresholdPermille` (default 500) of its starting HP. */
+  | "core-hp-below"
+  /** The occupied Breach Node's remaining HP is below `thresholdPermille` (default 500) —
+   * always false when not standing on a live Firewall or Core. */
+  | "node-hp-below"
+  /** The node ahead (see "node-ahead-is") is a live Breach Node. */
+  | "blocked-ahead"
+  /** This body has departed the current node on some EARLIER, separate visit — false for the
+   * dwell it's currently on, even after many ticks there (RULESET.md §14). */
+  | "visited-here-before"
+  // v2-only, PLAN.md 8.4 — self status (flat).
+  /** Cloak is neither active nor cooling down. */
+  | "cloak-ready"
+  /** Decoy still has an unspent absorb charge. */
+  | "decoy-armed"
+  /** A Tarpit's speed penalty is currently active at this body's position. */
+  | "slowed"
+  /** A Jammer is currently blinding this body's own sensors. */
+  | "jammed"
+  /** The network-wide Alarm alert is active right now. */
+  | "alarm-active"
+  // v2-only, PLAN.md 8.4 — time (flat).
+  /** The current tick is at or past `ticks`. */
+  | "tick-after"
+  /** The current tick is an exact multiple of `ticks` (minimum 5). */
+  | "every-n-ticks"
+  // v2-only, PLAN.md 8.4 — variables & multi-entity (flat).
+  /** Flag `flagIndex` (0-3) is currently on, per this body's own `set-flag` history. */
+  | "flag-is"
+  /** This body was born from a `worm-split`, not the battle's original entity (id 0). */
+  | "is-clone"
+  /** Fewer than `count` bodies are currently alive. */
+  | "entity-count-below";
 
 export type ActionKind =
   // Movement — all four write the same movement slot (first writer this tick wins).
@@ -89,7 +130,22 @@ export type ActionKind =
   | "slow-crawl"
   // Utility.
   | "self-repair"
-  | "arm-decoy";
+  | "arm-decoy"
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c/8.3d).
+  | "worm-split"
+  | "detonate"
+  | "set-checkpoint"
+  // v2-only, PLAN.md 8.4.
+  | "move-toward-node-type"
+  | "sprint"
+  | "recall"
+  | "target-strike"
+  | "emp-burst"
+  | "overclock"
+  | "spoof-signature"
+  | "purge"
+  | "siphon"
+  | "set-flag";
 
 /**
  * How often an event may fire.
@@ -107,14 +163,30 @@ export interface SheetCondition {
   readonly targetNodeTypes?: readonly DefenseNodeType[];
   /** "integrity-below" only — permille of starting Integrity. Defaults to 500. */
   readonly integrityThresholdPermille?: number;
-  /** "honeypot-near" / "trap-near" only — detection radius tier. Defaults to 1. */
+  /** "honeypot-near" / "trap-near" / "ice-near" / "scanner-near" only — detection radius tier. Defaults to 1. */
   readonly tier?: BlockTier;
+  /** "core-within-hops" only — 1-5. Defaults to 3. */
+  readonly hops?: number;
+  /** "core-hp-below" / "node-hp-below" only — permille of the target's max HP. Defaults to 500. */
+  readonly thresholdPermille?: number;
+  /** "tick-after" / "every-n-ticks" only. "every-n-ticks" enforces a minimum of 5. Defaults to 100. */
+  readonly ticks?: number;
+  /** "flag-is" only — 0-3. Defaults to 0. */
+  readonly flagIndex?: number;
+  /** "entity-count-below" only — 2-3. Defaults to 2. */
+  readonly count?: number;
 }
 
 export interface SheetAction {
   readonly kind: ActionKind;
   /** Tiered actions only (attack/stealth/utility). Defaults to 1. */
   readonly tier?: BlockTier;
+  /** "move-toward-node-type" only — which node types count as the target. Defaults to ["firewall"]. */
+  readonly targetNodeTypes?: readonly DefenseNodeType[];
+  /** "set-flag" only — 0-3. Defaults to 0. */
+  readonly flagIndex?: number;
+  /** "set-flag" only — the value to set that flag to. Defaults to true. */
+  readonly flagValue?: boolean;
 }
 
 export interface SheetEvent {
@@ -134,15 +206,23 @@ export interface VirusProgram {
   readonly events: readonly SheetEvent[];
 }
 
-export type DefenseNodeType =
-  | "router"
-  | "firewall"
-  | "ice-sentry"
-  | "honeypot"
-  | "scanner"
-  | "trap"
-  | "core"
-  | "entry";
+/**
+ * v1's node types, as a runtime array (not just a type) — `validateDefenseGraph` needs a `Set` it
+ * can check an untyped `DefenseGraph` (from `localStorage`, or a future server) against, not just
+ * a compile-time guarantee. (ADR 0007 §"Memisah tabel node v2 dari v1 yang beku".)
+ */
+export const DEFENSE_NODE_TYPES_V1 = ["router", "firewall", "ice-sentry", "honeypot", "scanner", "trap", "core", "entry"] as const;
+export type DefenseNodeTypeV1 = (typeof DEFENSE_NODE_TYPES_V1)[number];
+
+/**
+ * v2 adds five node types (RULESET.md §14, ADR 0007 §A) on top of everything v1 has. `DefenseGraph`
+ * is shared by `BattleInputV1` and `BattleInputV2`, so the type is one superset rather than two
+ * unrelated unions — splitting it would cascade into `battle-common.ts`, `graph.ts`, `score.ts`,
+ * and both engines for no benefit, since a v1 graph containing a v2-only node type is a *runtime*
+ * validation failure (`unsupported-node-type`, `graph.ts`), not a type error.
+ */
+export const DEFENSE_NODE_TYPES_V2 = [...DEFENSE_NODE_TYPES_V1, "patch-server", "tarpit", "jammer", "turnstile", "alarm"] as const;
+export type DefenseNodeType = (typeof DEFENSE_NODE_TYPES_V2)[number];
 
 /** Router/Entry/Core are untiered (RULESET.md §5.1); firewall/ice-sentry/honeypot/scanner/trap carry a tier. */
 export interface DefenseNode {
@@ -191,9 +271,25 @@ export type BattleEventType =
   | "virus-departed-node"
   | "virus-damaged"
   | "virus-repaired"
+  /**
+   * Two roles (PLAN.md 8.3d): the BATTLE-ending death — no entity survives, `actor: "virus"`, never
+   * `entityId` — is still pushed exactly once, by `finalize()`, at the very end of the log. A body
+   * that dies WITH a `set-checkpoint` charge and respawns instead pushes this same type first (its
+   * own individual death, carrying `entityId` under the same `sheetCanSplit()` gate as everything
+   * else) immediately followed by `virus-respawned` — "it died, then it came back" is the readable
+   * story the log tells, never a silent jump from 0 Integrity to positive.
+   */
   | "virus-died"
+  /** v2 only (PLAN.md 8.3d): a body just consumed a `set-checkpoint` charge to come back from 0
+   * Integrity — always preceded, same tick, by that body's own `virus-died`. `target` is the
+   * checkpoint node's id, `delta` the Integrity it woke up with. The ONLY event type allowed to
+   * mark Integrity rising from 0 (RULESET.md §13's invariant) — no other code path may do it. */
+  | "virus-respawned"
   | "node-damaged"
   | "node-destroyed"
+  /** v2 only (RULESET.md §14, ADR 0007 §A): Patch Server healing a Breach Node — deliberately its
+   * own type rather than a positive-delta "node-damaged", which would read as a contradiction. */
+  | "node-repaired"
   | "status-applied"
   | "status-expired"
   | "decoy-absorbed"
@@ -201,7 +297,13 @@ export type BattleEventType =
   | "battle-won"
   /** v2 only (ADR 0006 §6): an event whose actions actually had an effect this tick. `actor` is
    * the event's id or path, which is what lets a replay light up the rule that fired. */
-  | "rule-fired";
+  | "rule-fired"
+  /** v2 only, multi-entity (PLAN.md 8.3c): a `worm-split` action resolved. `entityId` is the body
+   * that split (always present — this event can only exist when its sheet's `sheetCanSplit()` is
+   * true), `target` is the new body's id, `delta` is the Integrity BOTH bodies now have (absolute,
+   * same convention as `virus-respawned` — "masing-masing", not an amount lost). Reuses no other
+   * event type because "one body is now two" isn't a damage/repair/move on any single body. */
+  | "virus-split";
 
 export interface BattleEvent {
   readonly tick: number;
@@ -209,6 +311,23 @@ export interface BattleEvent {
   readonly actor: string;
   readonly target?: string;
   readonly delta?: number;
+  /**
+   * v2 multi-entity only (ADR 0008, PLAN.md 8.3b): which VirusEntity this event is about, when it
+   * is about one body specifically (movement, damage/heal to that body, its own rule-fired, its
+   * own status changes, its own death-then-respawn) — absent for defense-side and battle-level
+   * events (node-repaired by a Patch Server, battle-won/battle-timeout, the BATTLE-ending
+   * `virus-died` pushed once by `finalize()`, an Alarm's network-wide status-applied). A body's own
+   * `virus-died` (the one immediately followed by `virus-respawned`, PLAN.md 8.3d) is entity-specific
+   * and follows the same gate as everything else here — see that type's own doc for the distinction.
+   *
+   * ABSENT (not 0) for every battle whose sheet contains no `worm-split` action — decided once,
+   * before tick 0, by `sheetCanSplit()`, so a log's event shape never depends on whether a split
+   * actually happened later. Every log that exists today has no split action anywhere, so this
+   * field is byte-for-byte absent from all of them: `entityId: undefined` is NOT the same bytes as
+   * an absent key (determinism.test.ts's stableStringify uses Object.keys), so every write site
+   * uses the `...(canSplit ? { entityId } : {})` idiom, never a literal `entityId: undefined`.
+   */
+  readonly entityId?: number;
 }
 
 export interface Score {

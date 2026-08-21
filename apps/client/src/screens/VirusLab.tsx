@@ -11,6 +11,7 @@ import {
   type OnceScope,
 } from "@payload/sim";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ACTION_CATALOG,
   CONDITION_CATALOG,
@@ -20,8 +21,11 @@ import {
   conditionWeightKb,
   findActionEntry,
   findConditionEntry,
+  type ParamSpec,
 } from "../data/sheetCatalog.js";
 import { PRACTICE_DEFENSES } from "../data/practiceDefenses.js";
+import { baseResearchNodeIdForAction, baseResearchNodeIdForCondition, isActionUnlocked, isConditionUnlocked, unlocked, validateAgainstUnlocks } from "../logic/unlocks.js";
+import { useResearchStore } from "../state/researchStore.js";
 import { canNestUnder, toVirusProgram, useVirusLabStore, type ActionInstance, type ConditionInstance, type RowInstance } from "../state/virusLabStore.js";
 import { theme } from "../theme.js";
 import { Screen } from "./Screen.js";
@@ -68,6 +72,61 @@ interface PickerRequest {
   readonly mode: "condition" | "action";
 }
 
+/** "targetNodeType" -> "target-node-type", so every param's control gets its own stable testid. */
+function paramSlug(key: string): string {
+  return key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+/** Renders the one control a `ParamSpec` describes, reading/writing the matching field on a
+ * `ConditionInstance` (PLAN.md 8.4 — replaces the old `takesNodeTypes`/`takesThreshold` booleans,
+ * which couldn't grow past two params). */
+function ConditionParamControl({ rowId, condition, param, label }: { rowId: string; condition: ConditionInstance; param: ParamSpec; label: string }): JSX.Element {
+  const updateCondition = useVirusLabStore((state) => state.updateCondition);
+  const testId = `sheet-condition-${paramSlug(param.key)}`;
+  const ariaLabel = `${param.label} untuk ${label}`;
+
+  if (param.kind === "node-types") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={condition.targetNodeType} onChange={(event) => updateCondition(rowId, condition.id, { targetNodeType: event.target.value as DefenseNodeType })}>
+        {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
+          <option key={option.type} value={option.type}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "threshold") {
+    const value = param.key === "integrityThresholdPermille" ? condition.integrityThresholdPermille : condition.thresholdPermille;
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={value} onChange={(event) => updateCondition(rowId, condition.id, { [param.key]: Number(event.target.value) })}>
+        {THRESHOLD_OPTIONS.map((permille) => (
+          <option key={permille} value={permille}>
+            {permille / 10}%
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "bool") {
+    // No condition in CONDITION_CATALOG uses a "bool" param today — only `set-flag` (an action) does.
+    throw new Error(`ConditionParamControl: unexpected bool param "${param.key}"`);
+  }
+  // "int" — the four params it covers (hops/ticks/flagIndex/count) are all plain numbers on ConditionInstance.
+  return (
+    <input
+      type="number"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      min={param.min}
+      max={param.max}
+      step={param.step ?? 1}
+      value={condition[param.key]}
+      onChange={(event) => updateCondition(rowId, condition.id, { [param.key]: Number(event.target.value) })}
+    />
+  );
+}
+
 function ConditionChip({ rowId, condition }: { rowId: string; condition: ConditionInstance }): JSX.Element {
   const entry = findConditionEntry(condition.kind);
   const removeCondition = useVirusLabStore((state) => state.removeCondition);
@@ -87,34 +146,9 @@ function ConditionChip({ rowId, condition }: { rowId: string; condition: Conditi
         NOT
       </button>
       <span className="payload-sheet-chip-label">{entry.label}</span>
-      {entry.takesNodeTypes && (
-        <select
-          data-testid="sheet-condition-node-type"
-          aria-label={`Tipe node untuk ${entry.label}`}
-          value={condition.targetNodeType}
-          onChange={(event) => updateCondition(rowId, condition.id, { targetNodeType: event.target.value as DefenseNodeType })}
-        >
-          {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
-            <option key={option.type} value={option.type}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      )}
-      {entry.takesThreshold && (
-        <select
-          data-testid="sheet-condition-threshold"
-          aria-label={`Ambang untuk ${entry.label}`}
-          value={condition.integrityThresholdPermille}
-          onChange={(event) => updateCondition(rowId, condition.id, { integrityThresholdPermille: Number(event.target.value) })}
-        >
-          {THRESHOLD_OPTIONS.map((permille) => (
-            <option key={permille} value={permille}>
-              {permille / 10}%
-            </option>
-          ))}
-        </select>
-      )}
+      {entry.params.map((param) => (
+        <ConditionParamControl key={param.key} rowId={rowId} condition={condition} param={param} label={entry.label} />
+      ))}
       {conditionIsTiered(condition.kind) && (
         <select
           data-testid="sheet-condition-tier"
@@ -137,6 +171,51 @@ function ConditionChip({ rowId, condition }: { rowId: string; condition: Conditi
   );
 }
 
+/** Same idea as `ConditionParamControl`, for the `ActionInstance` side. Only `set-flag` needs two
+ * params at once (`flagIndex` + `flagValue`) — the two-parameter chip the 390px check has to look at. */
+function ActionParamControl({ rowId, action, param, label }: { rowId: string; action: ActionInstance; param: ParamSpec; label: string }): JSX.Element {
+  const updateAction = useVirusLabStore((state) => state.updateAction);
+  const testId = `sheet-action-${paramSlug(param.key)}`;
+  const ariaLabel = `${param.label} untuk ${label}`;
+
+  if (param.kind === "node-types") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={action.targetNodeType} onChange={(event) => updateAction(rowId, action.id, { targetNodeType: event.target.value as DefenseNodeType })}>
+        {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
+          <option key={option.type} value={option.type}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "bool") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={action.flagValue ? "on" : "off"} onChange={(event) => updateAction(rowId, action.id, { flagValue: event.target.value === "on" })}>
+        <option value="on">Nyala</option>
+        <option value="off">Mati</option>
+      </select>
+    );
+  }
+  if (param.kind === "threshold") {
+    // No action in ACTION_CATALOG uses a "threshold" param today — only conditions do.
+    throw new Error(`ActionParamControl: unexpected threshold param "${param.key}"`);
+  }
+  // "int" — the only action-side int param is flagIndex.
+  return (
+    <input
+      type="number"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      min={param.min}
+      max={param.max}
+      step={param.step ?? 1}
+      value={action.flagIndex}
+      onChange={(event) => updateAction(rowId, action.id, { flagIndex: Number(event.target.value) })}
+    />
+  );
+}
+
 function ActionChip({ rowId, action, index, total }: { rowId: string; action: ActionInstance; index: number; total: number }): JSX.Element {
   const entry = findActionEntry(action.kind);
   const removeAction = useVirusLabStore((state) => state.removeAction);
@@ -147,6 +226,9 @@ function ActionChip({ rowId, action, index, total }: { rowId: string; action: Ac
   return (
     <li className="payload-sheet-chip" data-testid="sheet-action" data-kind={action.kind} style={{ borderColor: actionColor(action.kind) }} title={tierDetail ?? entry.summary}>
       <span className="payload-sheet-chip-label">{entry.label}</span>
+      {entry.params.map((param) => (
+        <ActionParamControl key={param.key} rowId={rowId} action={action} param={param} label={entry.label} />
+      ))}
       {entry.tiers && (
         <select data-testid="sheet-action-tier" aria-label={`Tier untuk ${entry.label}`} value={action.tier} onChange={(event) => setActionTier(rowId, action.id, Number(event.target.value) as BlockTier)}>
           {entry.tiers.map((option) => (
@@ -251,25 +333,37 @@ function describeResult(result: BattleResult): string {
 }
 
 export function VirusLab(): JSX.Element {
+  const navigate = useNavigate();
   const rows = useVirusLabStore((state) => state.rows);
   const addRow = useVirusLabStore((state) => state.addRow);
   const addCondition = useVirusLabStore((state) => state.addCondition);
   const addAction = useVirusLabStore((state) => state.addAction);
+  const researchCompleted = useResearchStore((state) => state.completed);
+  const claimOnce = useResearchStore((state) => state.claimOnce);
+  const unlockedState = useMemo(() => unlocked(researchCompleted), [researchCompleted]);
   const [picker, setPicker] = useState<PickerRequest | null>(null);
   const [results, setResults] = useState<readonly { defenseId: string; label: string; result: BattleResult }[] | null>(null);
 
   const program = useMemo(() => toVirusProgram(rows), [rows]);
   const validation = useMemo(() => validateVirusProgram(program, RULESET_V2, ACCOUNT_TIER), [program]);
+  const unlockIssues = useMemo(() => validateAgainstUnlocks(program, unlockedState), [program, unlockedState]);
   const overBudget = validation.weightKb > TIER_CONFIG.payloadBudgetKb;
 
+  /** GDD §9's "simulasi kering mengalahkan pertahanan latihan baru" Data source — 80 Data the
+   * first time this exact practice defense is beaten, keyed per defense so re-running a dry
+   * simulation the player already won doesn't pay out twice. */
   const runDrySimulation = (): void => {
-    setResults(
-      PRACTICE_DEFENSES.map((practice, index) => ({
-        defenseId: practice.id,
-        label: practice.label,
-        result: simulate({ rulesetVersion: "v2", seed: PRACTICE_SEED_BY_DEFENSE_INDEX[index]!, virus: program, defense: practice.graph }).result,
-      })),
-    );
+    const runs = PRACTICE_DEFENSES.map((practice, index) => ({
+      defenseId: practice.id,
+      label: practice.label,
+      result: simulate({ rulesetVersion: "v2", seed: PRACTICE_SEED_BY_DEFENSE_INDEX[index]!, virus: program, defense: practice.graph }).result,
+    }));
+    setResults(runs);
+    for (const run of runs) {
+      if (run.result.winner === "attacker") {
+        claimOnce(`dry-simulation:${run.defenseId}`, 80);
+      }
+    }
   };
 
   return (
@@ -290,12 +384,20 @@ export function VirusLab(): JSX.Element {
         </p>
       </section>
 
-      {(validation.errors.length > 0 || validation.warnings.length > 0) && (
+      {(validation.errors.length > 0 || validation.warnings.length > 0 || unlockIssues.length > 0) && (
         <section data-testid="sheet-issues">
           <ul>
             {validation.errors.map((error) => (
               <li key={`${error.code}-${error.path ?? ""}`} data-testid="sheet-error" style={{ color: theme.faction.attack }}>
                 {error.message}
+              </li>
+            ))}
+            {/* Research-gating issues (PLAN.md 8.7, ADR 0009 §C) are a SEPARATE gate from sim's own
+            validateVirusProgram() — packages/sim stays ignorant of research — but read from the
+            same list on screen, since a player doesn't care which layer objected. */}
+            {unlockIssues.map((issue, index) => (
+              <li key={`${issue.code}-${issue.path}-${index}`} data-testid="sheet-error" style={{ color: theme.faction.attack }}>
+                {issue.message}
               </li>
             ))}
             {validation.warnings.map((warning) => (
@@ -329,7 +431,7 @@ export function VirusLab(): JSX.Element {
       </section>
 
       <section data-testid="dry-run">
-        <button type="button" data-testid="run-dry-simulation" className="payload-btn-primary" disabled={!validation.valid} onClick={runDrySimulation}>
+        <button type="button" data-testid="run-dry-simulation" className="payload-btn-primary" disabled={!validation.valid || unlockIssues.length > 0} onClick={runDrySimulation}>
           Simulasi Kering vs 3 Latihan
         </button>
         {results && (
@@ -349,44 +451,72 @@ export function VirusLab(): JSX.Element {
             <h2>{picker.mode === "condition" ? "Pilih Kondisi" : "Pilih Aksi"}</h2>
             <div className="payload-modal-grid">
               {picker.mode === "condition"
-                ? CONDITION_CATALOG.map((entry) => (
-                    <button
-                      key={entry.kind}
-                      type="button"
-                      className="payload-modal-card"
-                      data-testid="sheet-picker-entry"
-                      data-kind={entry.kind}
-                      style={{ borderColor: conditionColor(entry.kind) }}
-                      onClick={() => {
-                        addCondition(picker.rowId, entry.kind);
-                        setPicker(null);
-                      }}
-                    >
-                      <span>{entry.label}</span>
-                      <small>{entry.tiers ? `${entry.tiers[0]!.weightKb}+ KB` : `${conditionWeightKb(entry.kind, 1)} KB`}</small>
-                      <small className="payload-sheet-picker-summary">{entry.summary}</small>
-                    </button>
-                  ))
-                : ACTION_CATALOG.map((entry) => (
-                    <button
-                      key={entry.kind}
-                      type="button"
-                      className="payload-modal-card"
-                      data-testid="sheet-picker-entry"
-                      data-kind={entry.kind}
-                      style={{ borderColor: actionColor(entry.kind) }}
-                      onClick={() => {
-                        addAction(picker.rowId, entry.kind);
-                        setPicker(null);
-                      }}
-                    >
-                      <span>{entry.label}</span>
-                      <small>
-                        {entry.weightKb} KB{entry.isSlot ? " · slot" : ""}
-                      </small>
-                      <small className="payload-sheet-picker-summary">{entry.summary}</small>
-                    </button>
-                  ))}
+                ? CONDITION_CATALOG.map((entry) => {
+                    const isLocked = !isConditionUnlocked(unlockedState, entry.kind);
+                    return (
+                      <button
+                        key={entry.kind}
+                        type="button"
+                        className="payload-modal-card"
+                        data-testid="sheet-picker-entry"
+                        data-kind={entry.kind}
+                        data-locked={isLocked}
+                        style={{ borderColor: conditionColor(entry.kind) }}
+                        title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : undefined}
+                        onClick={() => {
+                          if (isLocked) {
+                            const nodeId = baseResearchNodeIdForCondition(entry.kind);
+                            setPicker(null);
+                            navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+                            return;
+                          }
+                          addCondition(picker.rowId, entry.kind);
+                          setPicker(null);
+                        }}
+                      >
+                        <span>
+                          {isLocked ? "🔒 " : ""}
+                          {entry.label}
+                        </span>
+                        <small>{entry.tiers ? `${entry.tiers[0]!.weightKb}+ KB` : `${conditionWeightKb(entry.kind, 1)} KB`}</small>
+                        <small className="payload-sheet-picker-summary">{entry.summary}</small>
+                      </button>
+                    );
+                  })
+                : ACTION_CATALOG.map((entry) => {
+                    const isLocked = !isActionUnlocked(unlockedState, entry.kind);
+                    return (
+                      <button
+                        key={entry.kind}
+                        type="button"
+                        className="payload-modal-card"
+                        data-testid="sheet-picker-entry"
+                        data-kind={entry.kind}
+                        data-locked={isLocked}
+                        style={{ borderColor: actionColor(entry.kind) }}
+                        title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : undefined}
+                        onClick={() => {
+                          if (isLocked) {
+                            const nodeId = baseResearchNodeIdForAction(entry.kind);
+                            setPicker(null);
+                            navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+                            return;
+                          }
+                          addAction(picker.rowId, entry.kind);
+                          setPicker(null);
+                        }}
+                      >
+                        <span>
+                          {isLocked ? "🔒 " : ""}
+                          {entry.label}
+                        </span>
+                        <small>
+                          {entry.weightKb} KB{entry.isSlot ? " · slot" : ""}
+                        </small>
+                        <small className="payload-sheet-picker-summary">{entry.summary}</small>
+                      </button>
+                    );
+                  })}
             </div>
             <button type="button" data-testid="sheet-picker-close" onClick={() => setPicker(null)}>
               Tutup

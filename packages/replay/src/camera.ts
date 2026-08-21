@@ -1,4 +1,4 @@
-import { findTrack, samplePosition, type Timeline, type TimelineMarker, type Vec2 } from "./compile.js";
+import { findTrack, sampleIntegrityFor, samplePosition, trackIdForEntity, type Timeline, type TimelineMarker, type Vec2 } from "./compile.js";
 import { findNode } from "./compile.js";
 import { mix } from "./ease.js";
 
@@ -58,10 +58,62 @@ function overviewTarget(timeline: Timeline): Vec2 {
   return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
 }
 
-/** The event the climax cue and the death-moment jump both frame: the battle's own outcome marker, falling back to whatever happened last if the log ended some other way. */
+/**
+ * The event the climax cue and the death-moment jump both frame: the battle's own outcome marker,
+ * falling back to whatever happened last if the log ended some other way.
+ *
+ * Scans from the END rather than the start (PLAN.md 8.3e): the battle's real ending is always the
+ * LAST event in the log (nothing follows a win/loss), which is also the last thing that could ever
+ * compile to a terminal-kind marker — a body that dies and comes back via `set-checkpoint` (PLAN.md
+ * 8.3d) produces its own "died" marker along the way, and scanning forward would frame THAT interim
+ * death as if it were the outcome.
+ */
 function terminalMarker(timeline: Timeline): TimelineMarker | undefined {
-  const terminal = timeline.markers.find((marker) => TERMINAL_MARKER_KINDS.has(marker.kind));
-  return terminal ?? timeline.markers[timeline.markers.length - 1];
+  for (let i = timeline.markers.length - 1; i >= 0; i -= 1) {
+    if (TERMINAL_MARKER_KINDS.has(timeline.markers[i]!.kind)) {
+      return timeline.markers[i];
+    }
+  }
+  return timeline.markers[timeline.markers.length - 1];
+}
+
+/** Living (Integrity > 0) entity ids at battle-time T, ascending. Empty once every body has died. */
+function livingEntityIdsAt(timeline: Timeline, battleT: number): number[] {
+  return [...timeline.virusIntegrityByEntity.keys()].filter((entityId) => sampleIntegrityFor(timeline, entityId, battleT) > 0).sort((a, b) => a - b);
+}
+
+/** A single body to represent the WHOLE battle when a marker names no specific node (e.g. "won" —
+ * whichever body happens to be alive doesn't change who won). Smallest living id, or entity 0 if
+ * nobody is (a marker-target lookup still has to return something). */
+function representativeEntityId(timeline: Timeline, battleT: number): number {
+  return livingEntityIdsAt(timeline, battleT)[0] ?? 0;
+}
+
+/**
+ * Which body the follow cue should track at T (PLAN.md 8.3e): the living entity closest to
+ * `referencePoint` (the terminal marker's own target — where the battle is heading), ties broken
+ * by smallest id. Entity 0 can die mid-battle now that `worm-split` exists; blindly following it
+ * regardless would leave the camera parked on a corpse while the story moves on elsewhere.
+ */
+function closestLivingEntityId(timeline: Timeline, battleT: number, referencePoint: Vec2, fallback: Vec2): number {
+  const living = livingEntityIdsAt(timeline, battleT);
+  if (living.length === 0) {
+    return 0; // Nobody's alive — entity 0's track still holds a last-known position worth showing.
+  }
+  let best = living[0]!;
+  let bestDistanceSquared = Infinity;
+  for (const entityId of living) {
+    const track = findTrack(timeline, trackIdForEntity(entityId));
+    const position = track ? samplePosition(track, battleT, fallback) : fallback;
+    const dx = position.x - referencePoint.x;
+    const dy = position.y - referencePoint.y;
+    const distanceSquared = dx * dx + dy * dy;
+    if (distanceSquared < bestDistanceSquared) {
+      bestDistanceSquared = distanceSquared;
+      best = entityId;
+    }
+  }
+  return best;
 }
 
 function markerTarget(timeline: Timeline, marker: TimelineMarker | undefined, fallback: Vec2): Vec2 {
@@ -72,7 +124,8 @@ function markerTarget(timeline: Timeline, marker: TimelineMarker | undefined, fa
   if (node) {
     return node.position;
   }
-  const track = findTrack(timeline, "virus");
+  const entityId = marker.entityId ?? representativeEntityId(timeline, marker.t);
+  const track = findTrack(timeline, trackIdForEntity(entityId));
   return track ? samplePosition(track, marker.t, fallback) : fallback;
 }
 
@@ -152,8 +205,9 @@ export function sampleCameraShot(timeline: Timeline, cues: readonly CameraCue[],
     case "outro":
       return { target: fallback, zoom: OVERVIEW_ZOOM };
     case "follow": {
-      const track = findTrack(timeline, "virus");
       const battleT = battleTimeAt(cues, playbackT);
+      const entityId = closestLivingEntityId(timeline, battleT, markerTarget(timeline, terminalMarker(timeline), fallback), fallback);
+      const track = findTrack(timeline, trackIdForEntity(entityId));
       const target = track ? samplePosition(track, battleT, fallback) : fallback;
       return { target, zoom: FOLLOW_ZOOM };
     }

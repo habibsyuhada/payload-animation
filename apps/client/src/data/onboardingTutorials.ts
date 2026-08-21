@@ -26,6 +26,9 @@ export interface OnboardingTutorial {
   readonly defense: DefenseGraph;
   readonly layout: Layout;
   readonly seed: number;
+  /** PLAN.md §C.4: "tiap tutorial menyelesaikan satu simpul depth-1 di cabang yang ia ajarkan" —
+   * the research node this tutorial's completion grants for free, alongside its Data reward. */
+  readonly rewardResearchNodeId: string;
 }
 
 const TIER_1_CORE_HP = 1800;
@@ -59,6 +62,7 @@ export const ONBOARDING_TUTORIALS: readonly OnboardingTutorial[] = [
     },
     layout: { positions: { 1: { x: 20, y: 40 }, 2: { x: 20, y: 260 }, 3: { x: 200, y: 150 }, 4: { x: 350, y: 60 }, 5: { x: 500, y: 150 } } },
     seed: 1001,
+    rewardResearchNodeId: "pengintaian.honeypot-near",
   },
   {
     id: "condition",
@@ -85,6 +89,7 @@ export const ONBOARDING_TUTORIALS: readonly OnboardingTutorial[] = [
     },
     layout: { positions: { 1: { x: 20, y: 40 }, 2: { x: 20, y: 260 }, 3: { x: 250, y: 150 }, 4: { x: 470, y: 150 } } },
     seed: 1002,
+    rewardResearchNodeId: "serbuan.core-within-hops",
   },
   {
     id: "attack",
@@ -111,6 +116,7 @@ export const ONBOARDING_TUTORIALS: readonly OnboardingTutorial[] = [
     },
     layout: { positions: { 1: { x: 20, y: 40 }, 2: { x: 20, y: 260 }, 3: { x: 250, y: 150 }, 4: { x: 470, y: 150 } } },
     seed: 1003,
+    rewardResearchNodeId: "serbuan.exploit.1",
   },
   {
     id: "stealth",
@@ -141,6 +147,7 @@ export const ONBOARDING_TUTORIALS: readonly OnboardingTutorial[] = [
     },
     layout: { positions: { 1: { x: 20, y: 40 }, 2: { x: 20, y: 300 }, 3: { x: 220, y: 170 }, 5: { x: 350, y: 60 }, 6: { x: 350, y: 300 }, 4: { x: 470, y: 170 } } },
     seed: 1004,
+    rewardResearchNodeId: "bayangan.cloak.1",
   },
   {
     id: "utility",
@@ -167,6 +174,7 @@ export const ONBOARDING_TUTORIALS: readonly OnboardingTutorial[] = [
     },
     layout: { positions: { 1: { x: 20, y: 40 }, 2: { x: 20, y: 260 }, 3: { x: 250, y: 150 }, 4: { x: 470, y: 150 } } },
     seed: 1005,
+    rewardResearchNodeId: "replikasi.self-repair.1",
   },
 ];
 

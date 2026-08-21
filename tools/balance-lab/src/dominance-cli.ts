@@ -1,6 +1,6 @@
 import { sheetWeightKb } from "@payload/sim";
 import { DEFENSE_ARCHETYPES, VIRUS_ARCHETYPES, type VirusArchetype } from "./archetypes.js";
-import { hasUnexpectedFindings, renderDominanceSection, searchDominance, unexpectedFindings } from "./dominance.js";
+import { hasUnexpectedFindings, renderBandedDominanceSection, searchDominanceByBand, unexpectedFindingsByBand } from "./dominance.js";
 import { describeSheet, generatePopulation, type GeneratedVirus } from "./sheet-generator.js";
 
 /**
@@ -25,10 +25,10 @@ function asGenerated(archetype: VirusArchetype): GeneratedVirus {
 
 function main(): void {
   const population = [...VIRUS_ARCHETYPES.map(asGenerated), ...generatePopulation(GENERATOR_SEED, POPULATION_SIZE)];
-  const report = searchDominance(population, DEFENSE_ARCHETYPES, SAMPLE_SIZE, SEED_BASE);
-  process.stdout.write(`${renderDominanceSection(report)}\n`);
+  const bands = searchDominanceByBand(population, DEFENSE_ARCHETYPES, SAMPLE_SIZE, SEED_BASE);
+  process.stdout.write(`${renderBandedDominanceSection(bands)}\n`);
 
-  const unexpected = unexpectedFindings(report);
+  const unexpected = unexpectedFindingsByBand(bands);
   if (hasUnexpectedFindings(unexpected)) {
     for (const virus of unexpected.viruses) {
       process.stdout.write(`NEW dominant virus: ${virus.name} (${virus.weightKb} KB) — ${virus.description}\n`);

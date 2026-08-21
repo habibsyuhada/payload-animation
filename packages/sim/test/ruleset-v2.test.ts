@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTION_SPECS_V2,
+  BREACH_PASSIVE_DRAIN_V2,
   CONDITION_SPECS_V2,
   MAX_SHEET_DEPTH_V2,
   RULESET_V2,
@@ -10,9 +11,14 @@ import {
   getConditionRadiusHops,
   getConditionSpec,
   getConditionWeightKb,
+  getDefenseNodeCostV2,
+  getFirewallConfigV2,
+  getIceSentryConfigV2,
+  getScannerConfigV2,
+  getTrapDamageV2,
 } from "../src/ruleset-v2.js";
-import { RULESET_V1, getAccountTierConfig } from "../src/ruleset.js";
-import type { ActionKind, BlockTier, ConditionKind } from "../src/types.js";
+import { RULESET_V1, getAccountTierConfig, getDefenseNodeCost, getFirewallConfig, getIceSentryConfig, getScannerConfig, getTrapDamage, BREACH_PASSIVE_DRAIN_V1 } from "../src/ruleset.js";
+import type { ActionKind, BlockTier, ConditionKind, DefenseNode } from "../src/types.js";
 
 /**
  * Guards the catalog against the one failure mode a table like this actually has: a kind added to
@@ -30,6 +36,23 @@ const ALL_CONDITION_KINDS: readonly ConditionKind[] = [
   "took-damage-last-tick",
   "on-breach-node",
   "at-node",
+  "ice-near",
+  "scanner-near",
+  "core-within-hops",
+  "core-hp-below",
+  "node-hp-below",
+  "blocked-ahead",
+  "visited-here-before",
+  "cloak-ready",
+  "decoy-armed",
+  "slowed",
+  "jammed",
+  "alarm-active",
+  "tick-after",
+  "every-n-ticks",
+  "flag-is",
+  "is-clone",
+  "entity-count-below",
 ];
 
 const ALL_ACTION_KINDS: readonly ActionKind[] = [
@@ -45,6 +68,19 @@ const ALL_ACTION_KINDS: readonly ActionKind[] = [
   "slow-crawl",
   "self-repair",
   "arm-decoy",
+  "worm-split",
+  "detonate",
+  "set-checkpoint",
+  "move-toward-node-type",
+  "sprint",
+  "recall",
+  "target-strike",
+  "emp-burst",
+  "overclock",
+  "spoof-signature",
+  "purge",
+  "siphon",
+  "set-flag",
 ];
 
 const TIERS: readonly BlockTier[] = [1, 2, 3];
@@ -73,10 +109,17 @@ describe("v2 catalog coverage", () => {
     expect(movementSlotted).toEqual(ACTION_SPECS_V2.filter((spec) => spec.category === "movement").map((spec) => spec.kind));
   });
 
-  it("gives the attack actions no slot at all — they are the cumulative ones", () => {
-    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack")) {
+  it("gives the attack actions no slot at all — they are the cumulative ones, except the ones that aren't", () => {
+    // `detonate` (8.3c), `overclock` and `emp-burst` (8.4) are the deliberate exceptions: each is a
+    // one-shot self-buff or burst rather than something that stacks, so each takes a slot like
+    // every other non-repeatable action.
+    const SLOTTED_ATTACK_EXCEPTIONS: readonly ActionKind[] = ["detonate", "overclock", "emp-burst"];
+    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack" && !SLOTTED_ATTACK_EXCEPTIONS.includes(candidate.kind))) {
       expect(spec.slot).toBeUndefined();
     }
+    expect(getActionSpec("detonate").slot).toBe("detonate");
+    expect(getActionSpec("overclock").slot).toBe("overclock");
+    expect(getActionSpec("emp-burst").slot).toBe("emp");
     expect(getActionSpec("self-repair").slot).toBeUndefined();
   });
 
@@ -120,6 +163,54 @@ describe("v2 account tiers", () => {
 
   it("caps nesting at the depth the portrait screen can show (GDD §3)", () => {
     expect(MAX_SHEET_DEPTH_V2).toBe(3);
+  });
+});
+
+/**
+ * 8.1b: v2's node tables must start as an EXACT copy of v1's (ADR 0007) — this is plumbing, not a
+ * rebalance, so these tests pin every v2 node number against its v1 counterpart rather than
+ * against a hardcoded literal. 8.2b's ICE Nest fix is the first thing allowed to break this parity.
+ */
+describe("v2 node tables (8.1b: seeded identical to v1)", () => {
+  const V1_COSTED_NODES: readonly DefenseNode[] = [
+    { id: 1, type: "router" },
+    { id: 2, type: "entry" },
+    { id: 3, type: "core" },
+    { id: 4, type: "firewall", tier: 1 },
+    { id: 5, type: "firewall", tier: 2 },
+    { id: 6, type: "firewall", tier: 3 },
+    { id: 7, type: "ice-sentry", tier: 1 },
+    { id: 8, type: "ice-sentry", tier: 2 },
+    { id: 9, type: "ice-sentry", tier: 3 },
+    { id: 10, type: "honeypot", tier: 1 },
+    { id: 11, type: "honeypot", tier: 2 },
+    { id: 12, type: "honeypot", tier: 3 },
+    { id: 13, type: "scanner", tier: 1 },
+    { id: 14, type: "scanner", tier: 2 },
+    { id: 15, type: "scanner", tier: 3 },
+    { id: 16, type: "trap", tier: 1 },
+    { id: 17, type: "trap", tier: 2 },
+    { id: 18, type: "trap", tier: 3 },
+  ];
+
+  it("costs every v1 node type identically in v2", () => {
+    for (const node of V1_COSTED_NODES) {
+      expect(getDefenseNodeCostV2(node.type, node.tier)).toBe(getDefenseNodeCost(node.type, node.tier));
+    }
+  });
+
+  it("throws for a v2-only node type — 8.2a is what defines those", () => {
+    expect(() => getDefenseNodeCostV2("jammer")).toThrow(/no v2 defense node cost/);
+  });
+
+  it("matches v1's passive drain, Firewall, ICE Sentry, Scanner, and Trap tables tier for tier", () => {
+    expect(BREACH_PASSIVE_DRAIN_V2).toBe(BREACH_PASSIVE_DRAIN_V1);
+    for (const tier of TIERS) {
+      expect(getFirewallConfigV2(tier)).toEqual(getFirewallConfig(tier));
+      expect(getIceSentryConfigV2(tier)).toEqual(getIceSentryConfig(tier));
+      expect(getScannerConfigV2(tier)).toEqual(getScannerConfig(tier));
+      expect(getTrapDamageV2(tier)).toBe(getTrapDamage(tier));
+    }
   });
 });
 

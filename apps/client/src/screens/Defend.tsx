@@ -1,11 +1,13 @@
 import { getDefenseNodeCost, getIceSentryConfig, type BattleLog, type BlockTier, type SheetEvent } from "@payload/sim";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
 import { findActionEntry, findConditionEntry } from "../data/sheetCatalog.js";
 import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
 import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
+import { baseResearchNodeIdForDefenseNode, isDefenseNodeUnlocked, unlocked } from "../logic/unlocks.js";
 import { useAppShellStore } from "../state/appShellStore.js";
+import { useResearchStore } from "../state/researchStore.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -82,6 +84,17 @@ function nodeDescription(node: DefendNode): string {
   if (node.type === "core") return CORE_DESCRIPTION;
   if (node.type === "entry") return ENTRY_DESCRIPTION;
   return findNodeTierDescription(findPlaceableEntry(node.type), node.tier);
+}
+
+/** A stable fingerprint of a layout's shape — type, tier, and rounded position of every node,
+ * sorted so nodes in a different draw order still hash the same. Not cryptographic, just
+ * deterministic dedup: keys the one-time-per-layout gauntlet Data reward (PLAN.md §C.3) so
+ * repeatedly tapping "Uji pertahanan" on the same build doesn't pay out more than once. */
+function layoutFingerprint(nodes: readonly DefendNode[]): string {
+  return nodes
+    .map((node) => `${node.type}:${node.tier ?? 0}:${Math.round(node.x / 10)}:${Math.round(node.y / 10)}`)
+    .sort()
+    .join("|");
 }
 
 /** The world rectangle every node's silhouette fits inside — what the opening camera frames. */
@@ -282,6 +295,10 @@ interface CameraGestureState {
 }
 
 export function Defend(): JSX.Element {
+  const navigate = useNavigate();
+  const researchCompleted = useResearchStore((state) => state.completed);
+  const claimOnce = useResearchStore((state) => state.claimOnce);
+  const unlockedState = useMemo(() => unlocked(researchCompleted), [researchCompleted]);
   const nodes = useDefendStore((state) => state.nodes);
   const zoom = useDefendStore((state) => state.zoom);
   const offsetX = useDefendStore((state) => state.offsetX);
@@ -544,9 +561,15 @@ export function Defend(): JSX.Element {
     setTestReport(null);
     clearSelection();
     requestAnimationFrame(() => {
-      const report = runDefenseTest(useDefendStore.getState().nodes);
+      const currentNodes = useDefendStore.getState().nodes;
+      const report = runDefenseTest(currentNodes);
       setTestReport(report);
       setTesting(false);
+      // PLAN.md §C.3: a layout only pays out once, the first time it proves breachable — so the
+      // reward is for building something beatable, not for re-running the same test.
+      if (report.verdict === "breachable") {
+        claimOnce(`layout:${layoutFingerprint(currentNodes)}`, 200);
+      }
       // Straight into the battle on the map — the numbers alone don't show how they got in.
       startPlayback(report);
     });
@@ -575,9 +598,15 @@ export function Defend(): JSX.Element {
   }
 
   /** Drops the picked type in the middle of whatever the camera is currently looking at — the
-   * screen centre converted back into world coordinates. */
+   * screen centre converted back into world coordinates. Entry/Core are structural and never gated
+   * (PLAN.md 8.7) — only PLACEABLE_NODE_CATALOG's defensive hardware goes through research. */
   function handlePickNodeType(type: PlaceableNodeType, tiered: boolean): void {
     setPickerOpen(false);
+    if (type !== "entry" && type !== "core" && !isDefenseNodeUnlocked(unlockedState, type, 1)) {
+      const nodeId = baseResearchNodeIdForDefenseNode(type, 1);
+      navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+      return;
+    }
     if (viewportSize.width <= 0 || viewportSize.height <= 0) {
       return;
     }
@@ -725,58 +754,64 @@ export function Defend(): JSX.Element {
                     </g>
                   ))}
 
-                {/* ICE Sentry fire: a tracer snapping from the sentry to wherever the virus is,
-                plus a muzzle flare, so a hit is something you see rather than infer. */}
+                {/* ICE Sentry fire: a tracer snapping from the sentry to whichever body it hit
+                (PLAN.md 8.3e), plus a muzzle flare, so a hit is something you see rather than infer. */}
                 {playbackFrame.shots.map((shot, index) => (
                   <g key={`shot-${index}`} data-testid="defend-playback-shot">
-                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke={FIRE_RANGE_COLOR} strokeWidth={6} strokeLinecap="round" opacity={(1 - shot.progress) * 0.35} />
-                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke="#eaf6ff" strokeWidth={2} strokeLinecap="round" opacity={1 - shot.progress} />
+                    <line x1={shot.from.x} y1={shot.from.y} x2={shot.to.x} y2={shot.to.y} stroke={FIRE_RANGE_COLOR} strokeWidth={6} strokeLinecap="round" opacity={(1 - shot.progress) * 0.35} />
+                    <line x1={shot.from.x} y1={shot.from.y} x2={shot.to.x} y2={shot.to.y} stroke="#eaf6ff" strokeWidth={2} strokeLinecap="round" opacity={1 - shot.progress} />
                     <circle cx={shot.from.x} cy={shot.from.y} r={10 + shot.progress * 10} fill="none" stroke={FIRE_RANGE_COLOR} strokeWidth={3} opacity={1 - shot.progress} />
                   </g>
                 ))}
 
-                {playbackFrame.virusAlive ? (
-                  <g data-testid="defend-playback-virus">
-                    {/* Impact flash: the virus itself flares red the moment it's hit. */}
-                    {playbackFrame.recentHits.map((hit, index) => (
-                      <circle key={`hit-${index}`} cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16 + hit.progress * 18} fill="none" stroke={theme.faction.attack} strokeWidth={3} opacity={1 - hit.progress} />
-                    ))}
-                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16} fill={theme.faction.attack} opacity={0.18} />
-                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={9} fill="#eaf6ff" />
-
-                    {/* Health bar rides BELOW the virus, in world units so it scales with the map —
-                    above is where each node prints its own name, and the two collided there. */}
-                    <rect x={playbackFrame.virusPosition.x - 26} y={playbackFrame.virusPosition.y + 16} width={52} height={9} rx={4.5} fill="#000" opacity={0.6} />
-                    <rect
-                      data-testid="defend-playback-hp"
-                      data-integrity={Math.round(playbackFrame.integrity * 100)}
-                      x={playbackFrame.virusPosition.x - 24.5}
-                      y={playbackFrame.virusPosition.y + 17.5}
-                      width={49 * playbackFrame.integrity}
-                      height={6}
-                      rx={3}
-                      fill={playbackFrame.integrity > 0.5 ? theme.faction.stealth : playbackFrame.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
-                    />
-                    {/* Labelled because the virus parks ON the Core for most of a battle, where an
-                    unlabelled bar is indistinguishable from the Core's own. */}
-                    <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y + 36} textAnchor="middle" fontSize={11} fontWeight={700} fill={theme.textMuted}>
-                      Virus {Math.round(playbackFrame.integrity * 100)}%
-                    </text>
-
-                    {/* Floating damage numbers, drifting up as they fade. */}
-                    {playbackFrame.recentHits
-                      .filter((hit) => hit.damage > 0)
-                      .map((hit, index) => (
-                        <text key={`dmg-${index}`} data-testid="defend-playback-damage" x={playbackFrame.virusPosition.x + 22} y={playbackFrame.virusPosition.y - 8 - hit.progress * 22} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
-                          -{hit.damage}
-                        </text>
+                {/* One body per split entity (PLAN.md 8.3e) — a battle that never splits renders
+                exactly the one entry it always did. */}
+                {playbackFrame.viruses.map((virus) => {
+                  const recentHits = playbackFrame.recentHits.filter((hit) => hit.entityId === virus.entityId);
+                  return virus.alive ? (
+                    <g key={`virus-${virus.entityId}`} data-testid="defend-playback-virus" data-entity-id={virus.entityId}>
+                      {/* Impact flash: the body itself flares red the moment it's hit. */}
+                      {recentHits.map((hit, index) => (
+                        <circle key={`hit-${index}`} cx={virus.position.x} cy={virus.position.y} r={16 + hit.progress * 18} fill="none" stroke={theme.faction.attack} strokeWidth={3} opacity={1 - hit.progress} />
                       ))}
-                  </g>
-                ) : (
-                  <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y} textAnchor="middle" fontSize={20} fill={theme.faction.attack}>
-                    ✖
-                  </text>
-                )}
+                      <circle cx={virus.position.x} cy={virus.position.y} r={16} fill={theme.faction.attack} opacity={0.18} />
+                      <circle cx={virus.position.x} cy={virus.position.y} r={9} fill="#eaf6ff" />
+
+                      {/* Health bar rides BELOW the body, in world units so it scales with the map —
+                      above is where each node prints its own name, and the two collided there. */}
+                      <rect x={virus.position.x - 26} y={virus.position.y + 16} width={52} height={9} rx={4.5} fill="#000" opacity={0.6} />
+                      <rect
+                        data-testid="defend-playback-hp"
+                        data-entity-id={virus.entityId}
+                        data-integrity={Math.round(virus.integrity * 100)}
+                        x={virus.position.x - 24.5}
+                        y={virus.position.y + 17.5}
+                        width={49 * virus.integrity}
+                        height={6}
+                        rx={3}
+                        fill={virus.integrity > 0.5 ? theme.faction.stealth : virus.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
+                      />
+                      {/* Labelled because a body parks ON the Core for most of a battle, where an
+                      unlabelled bar is indistinguishable from the Core's own. */}
+                      <text x={virus.position.x} y={virus.position.y + 36} textAnchor="middle" fontSize={11} fontWeight={700} fill={theme.textMuted}>
+                        {virus.entityId === 0 ? "Virus" : `Virus #${virus.entityId}`} {Math.round(virus.integrity * 100)}%
+                      </text>
+
+                      {/* Floating damage numbers, drifting up as they fade. */}
+                      {recentHits
+                        .filter((hit) => hit.damage > 0)
+                        .map((hit, index) => (
+                          <text key={`dmg-${index}`} data-testid="defend-playback-damage" x={virus.position.x + 22} y={virus.position.y - 8 - hit.progress * 22} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
+                            -{hit.damage}
+                          </text>
+                        ))}
+                    </g>
+                  ) : (
+                    <text key={`virus-${virus.entityId}`} x={virus.position.x} y={virus.position.y} textAnchor="middle" fontSize={20} fill={theme.faction.attack}>
+                      ✖
+                    </text>
+                  );
+                })}
               </g>
             )}
           </g>
@@ -1028,6 +1063,7 @@ export function Defend(): JSX.Element {
               {PICKER_CATALOG.map((entry) => {
                 const cost = nodeCostPt({ type: entry.type, ...(entry.tiered ? { tier: 1 as const } : {}) });
                 const affordable = cost <= budgetRemaining;
+                const isLocked = entry.type !== "entry" && entry.type !== "core" && !isDefenseNodeUnlocked(unlockedState, entry.type, 1);
                 return (
                   <button
                     key={entry.type}
@@ -1035,16 +1071,20 @@ export function Defend(): JSX.Element {
                     data-testid="defend-picker-entry"
                     data-node-type={entry.type}
                     data-affordable={affordable}
+                    data-locked={isLocked}
                     className="payload-modal-card"
                     style={{ borderColor: entry.color }}
                     disabled={!affordable}
-                    title={affordable ? undefined : `Butuh ${cost} pt, sisa ${budgetRemaining} pt`}
+                    title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : affordable ? undefined : `Butuh ${cost} pt, sisa ${budgetRemaining} pt`}
                     onClick={() => handlePickNodeType(entry.type, entry.tiered)}
                   >
                     <svg className="payload-modal-card-glyph" viewBox="0 0 40 40" aria-hidden="true">
                       <NodeGlyph shape={entry.shape} cx={20} cy={20} r={14} fill={entry.color} stroke="none" strokeWidth={0} />
                     </svg>
-                    <span>{entry.label}</span>
+                    <span>
+                      {isLocked ? "🔒 " : ""}
+                      {entry.label}
+                    </span>
                     <small>{cost}pt</small>
                   </button>
                 );

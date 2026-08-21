@@ -1137,3 +1137,102 @@ select {
   color: var(--color-text-muted);
   font-weight: 400;
 }
+
+/* A locked picker entry (PLAN.md 8.7) stays visible and tappable — tapping it jumps to Research
+ * instead of adding it — so it's greyed out rather than `disabled`. */
+.payload-modal-card[data-locked="true"] {
+  opacity: 0.55;
+}
+
+/* Research (PLAN.md 8.7): tab-and-list, no drag/pan — same phone-first convention as the Virus
+ * Lab editor and the Defend node picker (HANDOFF §5 no.14). */
+.payload-research-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+}
+
+.payload-research-tab {
+  border-width: 2px;
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.payload-research-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.payload-research-node {
+  background: var(--color-background-panel);
+  border-left: 3px solid var(--color-border);
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.payload-research-node[data-status="terkunci"] {
+  opacity: 0.7;
+}
+
+.payload-research-node-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.payload-research-node-name {
+  font-weight: 600;
+}
+
+.payload-research-node-cost {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.payload-research-unlocks {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.payload-research-unlocks li {
+  background: var(--color-background-panel-raised);
+  border-radius: 0.3rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.payload-research-node-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.payload-research-node-status {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.payload-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--color-faction-movement);
+  text-decoration: underline;
+  font-size: inherit;
+}

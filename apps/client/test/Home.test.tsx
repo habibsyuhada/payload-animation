@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Home } from "../src/screens/Home.js";
 import { useDefendStore } from "../src/state/defendStore.js";
+import { useResearchStore } from "../src/state/researchStore.js";
 import { useVirusLabStore } from "../src/state/virusLabStore.js";
 
 /**
@@ -19,6 +20,7 @@ let root: Root;
 beforeEach(() => {
   useVirusLabStore.getState().reset();
   useDefendStore.getState().reset();
+  useResearchStore.getState().reset();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -88,5 +90,22 @@ describe("HQ", () => {
 
   it("says plainly that everything lives on the device", async () => {
     expect(await textOf("hq-offline-note")).toContain("tersimpan di perangkat ini");
+  });
+
+  it("tracks the Data balance and how much is researchable right now", async () => {
+    expect(await textOf("hq-research-data")).toBe("0");
+    // With 0 Data, nothing costs 0 outside the already-completed Inti set — canResearch needs
+    // `data >= costData`, so a broke player sees nothing researchable yet.
+    expect(await textOf("hq-research-status")).toContain("0 riset bisa diambil");
+
+    useResearchStore.getState().grantData(500);
+    await vi.waitFor(async () => {
+      expect(await textOf("hq-research-data")).toBe("500");
+    });
+    // Every branch's depth-1 node is `requires: []` and costs 150 — affordable now, so the count
+    // moves off zero.
+    await vi.waitFor(async () => {
+      expect(await textOf("hq-research-status")).not.toContain("0 riset bisa diambil");
+    });
   });
 });

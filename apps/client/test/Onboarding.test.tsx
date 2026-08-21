@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ONBOARDING_TUTORIALS } from "../src/data/onboardingTutorials.js";
 import { Onboarding } from "../src/screens/Onboarding.js";
 import { useOnboardingStore } from "../src/state/onboardingStore.js";
+import { useResearchStore } from "../src/state/researchStore.js";
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
   useOnboardingStore.getState().reset();
+  useResearchStore.getState().reset();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -128,5 +130,18 @@ describe("Onboarding", () => {
     const complete = await findByTestId("onboarding-complete");
     expect(complete).toBeDefined();
     expect(page.getByTestId("onboarding-go-home").elements()).toHaveLength(1);
+
+    // PLAN.md §C.3/§C.4: 120 Data × 5 tutorials, plus one research node per branch taught.
+    expect(useResearchStore.getState().data).toBe(600);
+    for (const tutorial of ONBOARDING_TUTORIALS) {
+      expect(useResearchStore.getState().completed).toContain(tutorial.rewardResearchNodeId);
+    }
+  });
+
+  it("never pays out a tutorial's Data reward twice for the same tutorial id", () => {
+    const tutorial = ONBOARDING_TUTORIALS[0]!;
+    expect(useResearchStore.getState().claimOnce(`tutorial:${tutorial.id}`, 120)).toBe(true);
+    expect(useResearchStore.getState().claimOnce(`tutorial:${tutorial.id}`, 120)).toBe(false);
+    expect(useResearchStore.getState().data).toBe(120);
   });
 });

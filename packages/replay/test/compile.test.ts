@@ -1,7 +1,7 @@
 import { simulate } from "@payload/sim";
 import type { BattleInput, DefenseGraph, DefenseNode } from "@payload/sim";
 import { describe, expect, it } from "vitest";
-import { compileTimeline, findTrack, rulesFiringAt, sampleCoreHp, sampleIntegrity, samplePosition, type Layout } from "../src/compile.js";
+import { compileTimeline, findTrack, rulesFiringAt, sampleCoreHp, sampleIntegrity, sampleIntegrityFor, samplePosition, type Layout } from "../src/compile.js";
 
 // entry(1)/(2) --400du--> router(3) --600du--> core(4), speed 50: arrives router tick 8,
 // departs tick 9, arrives core tick 21 (matches packages/sim's engine.test.ts Scenario 1).
@@ -229,5 +229,71 @@ describe("samplePosition", () => {
     expect(timeline.markers.some((marker) => marker.kind === "node-hit" && marker.nodeId === 3)).toBe(true);
     // Core damage is never reported as the virus being hurt.
     expect(timeline.markers.some((marker) => marker.kind === "damage" && marker.nodeId === 4)).toBe(false);
+  });
+});
+
+/** V7.5 / PLAN.md 8.3e: a ruleset v2 battle that actually splits, so multi-track compilation has
+ * something real to compile from. Entry(1) -> Router(2, hub) -> Core(3); the sheet splits while
+ * pinned-in-place (hold-position) at the Router the first tick it arrives, so the new body is born
+ * at a known, checkable location. */
+const SPLIT_GRAPH: DefenseGraph = {
+  nodes: [
+    { id: 1, type: "entry" },
+    { id: 2, type: "router" },
+    { id: 3, type: "core" },
+  ] satisfies DefenseNode[],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 3,
+  coreHp: 400,
+};
+const SPLIT_LAYOUT: Layout = { positions: { 1: { x: 0, y: 0 }, 2: { x: 100, y: 0 }, 3: { x: 300, y: 0 } } };
+const SPLIT_INPUT: BattleInput = {
+  rulesetVersion: "v2",
+  seed: 7,
+  virus: {
+    events: [
+      { once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }], children: [] },
+      { conditions: [], actions: [{ kind: "move-toward-core" }], children: [] },
+    ],
+  },
+  defense: SPLIT_GRAPH,
+};
+
+describe("compileTimeline — multi-entity (PLAN.md 8.3e)", () => {
+  it("compiles a separate position track per body instead of merging them into one", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    const entity0 = findTrack(timeline, "virus");
+    const entity1 = findTrack(timeline, "virus:1");
+    expect(entity0).toBeDefined();
+    expect(entity1).toBeDefined();
+    expect(entity1).not.toBe(entity0);
+  });
+
+  it("gives a body born via worm-split a birth keyframe at its parent's position, not an arbitrary fallback", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    const entity1 = findTrack(timeline, "virus:1")!;
+    // Both bodies split while pinned at the Router (hold-position won the movement slot that
+    // tick), so the new body's very first keyframe should be the Router's own position.
+    expect(entity1.position[0]!.value).toEqual(SPLIT_LAYOUT.positions[2]);
+  });
+
+  it("keeps a separate Integrity track per body, with the top-level virusIntegrity aliasing entity 0", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    expect(timeline.virusIntegrityByEntity.get(1)).toBeDefined();
+    expect(timeline.virusIntegrityByEntity.get(0)).toEqual(timeline.virusIntegrity);
+    // Both bodies land on the same share of the pre-split Integrity (tier I: 500‰).
+    expect(sampleIntegrityFor(timeline, 0, timeline.durationSeconds)).toBeLessThanOrEqual(0.5);
+    expect(sampleIntegrityFor(timeline, 1, 0.5)).toBeCloseTo(0.5, 1);
+  });
+
+  it("carries entityId on a split body's own markers under the same gate as BattleEvent", () => {
+    const timeline = compileTimeline(simulate(SPLIT_INPUT), SPLIT_LAYOUT);
+    const nonSplitTimeline = compileTimeline(simulate(INPUT), LAYOUT);
+    expect(timeline.markers.some((marker) => marker.entityId !== undefined)).toBe(true);
+    expect(nonSplitTimeline.markers.every((marker) => marker.entityId === undefined)).toBe(true);
   });
 });
