@@ -181,6 +181,79 @@ diputar (DoD #3).
 - [x] **V7.5** Tulis ulang gauntlet Defend (`gauntletViruses.ts`) + arketipe balance-lab sebagai
       sheet v2, dan sorot `rule-fired` di replay (chip aturan menyala saat aturannya menembak).
 
+### Fase 8 — Ekspansi konten: node, blok logika, riset (keputusan desain sudah diambil, lihat docs/ADR/0007)
+
+Node pertahanan (6 tipe), blok logika v2 (9 kondisi/12 aksi), dan riset (tidak ada sama sekali) diisi
+sekaligus **sebagai satu sistem**: tiap node baru punya jawaban di sisi virus, tiap aksi baru punya
+node yang menghukumnya, dan pohon riset adalah urutan pemain berkenalan dengan keduanya — termasuk
+konten yang sudah ada sekarang. Sekaligus membayar dua utang tercatat: tabel node v2 yang masih
+membaca tabel v1 beku (blocker untuk node baru apa pun), dan dominasi "ICE Nest"
+(`known-dominance.ts`) yang jadi syarat rilis v2 sejak V7.4. Ruleset v2 di-extend **di tempat**
+(bukan bump v3) karena belum ada satu pun `BattleLog` yang pernah dipersistensi — sah dengan alasan
+yang sama seperti RULESET §9. Urutan sub-task di bawah **wajib diikuti**, tidak bisa diacak: 8.1
+memblokir semua node baru, 8.2 memblokir konten node, 8.3 memblokir tiga aksi di 8.4, dan 8.8 tidak
+bisa mengukur apa pun sebelum konten & pita riset ada. Perkiraan ±8-10 sesi.
+
+**Aturan emas berlaku 8.1-8.5:** lima hash di `packages/sim/test/determinism.test.ts:200-204` dan tiga
+snapshot v1 di `test/__snapshots__/engine.test.ts.snap` **tidak boleh bergerak**, kecuali di 8.2b dan
+8.4 (yang memang mengubah angka) dan wajib disebut di commit message. `git diff --stat
+packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase.
+
+- [ ] **8.1a** `packages/sim/src/types.ts`: `DefenseNodeType` jadi superset,
+      `DEFENSE_NODE_TYPES_V1`/`V2` sebagai konstanta runtime, `DefenseNodeTypeV1` sebagai subtype —
+      no-op murni, tidak ada file lain disentuh. `pnpm typecheck test` hijau, hash tidak bergerak.
+- [ ] **8.1b** Tabel & modul node v2: perluas `ruleset-v2.ts` (getter bersufiks `V2`), buat
+      `packages/sim/src/nodes-v2/` 1:1 dengan `DEFENSE_NODE_TYPES_V2` (angka awal = salinan persis
+      v1) — test 1:1 structural; `nodes/` & `ruleset.ts` tidak tersentuh; hash tidak bergerak.
+- [ ] **8.1c** Arahkan `engine-v2.ts` ke `nodes-v2/` (hanya blok import) — hash `sheet-v2` tetap
+      `c97faa3a`.
+- [ ] **8.1d** `validateDefenseGraph` sadar-versi lewat `topologyRulesFor(ruleset)` + kode error
+      `unsupported-node-type` + perbaiki bug laten `getDefenseNodeCost` yang melempar (jadi melapor)
+      untuk tipe tak dikenal — 18 kasus `graph.test.ts` hijau tanpa diedit, kasus v2 baru ditambah.
+- [ ] **8.2a** Lima node baru (Patch Server, Tarpit, Jammer, Turnstile, Alarm Relay — lihat ADR 0007
+      §A) + urutan tick baru (Jammer sebelum sensor sweep, Patch Server paling akhir) — ≥3 test
+      perilaku per node baru, hash tetap (belum dipakai skenario golden).
+- [ ] **8.2b** Perbaikan "ICE Nest": satu tembakan ICE mengenai satu virus per tick, sentry lain
+      tetap habiskan cooldown — test eksplisit dua sentry beririsan; hash `sheet-v2` **sengaja**
+      di-regenerasi, disebut di commit.
+- [ ] **8.3a** Refactor state multi-entitas di `engine-v2.ts` dengan N selalu 1 (belum ada aksi
+      split): `entities: VirusEntity[]`, pembagian global/per-entitas, urutan tick §11a (sentry di
+      loop luar, satu draw per sentry menembak), skor via maksimum bukan jumlah — **semua hash &
+      snapshot tidak bergerak**, 18 kasus `engine-v2.test.ts` hijau tanpa diedit.
+- [ ] **8.3b** `entityId?: number` di `BattleEvent` + gerbang statis `sheetCanSplit()` di `sheet.ts`
+      (idiom spread bersyarat, bukan `entityId: undefined`) — hash tetap untuk sheet lama; sheet
+      split menghasilkan `entityId` di tiap event sejak tick 0.
+- [ ] **8.3c** Aksi `worm-split` + `detonate`: cabang mewarisi salinan `firedOnceKeys` &
+      `decoy.activationsUsed`, `triggeredHoneypotIds` tetap global — test menang/kalah multi-entitas,
+      test dua cabang identik menyimpang di `move-random`.
+- [ ] **8.3d** Aksi `set-checkpoint`: respawn mengonsumsi `died` (bukan memintasnya), invariant
+      "integrity naik dari 0 hanya lewat `virus-respawned`" — `engine-v2.test.ts:285` (Self Repair
+      tidak membangkitkan) lulus tanpa diedit; hash tetap.
+- [ ] **8.3e** Replay & klien multi-track: `compile.ts` (id track `"virus"` untuk entitas 0,
+      `virusIntegrityByEntity`), `camera.ts` (`terminalMarker`/follow-cam multi-entitas), `draw.ts`
+      (N paket, tracer per entitas), `attackPlayback.ts`/`Defend.tsx` (`frame.viruses[]`) — kasus
+      satu-entitas di `compile.test.ts`/`camera.test.ts`/`draw.test.ts` lulus tanpa diedit; battle
+      split menampilkan dua tubuh dengan health bar independen.
+- [ ] **8.4** 17 kondisi & 13 aksi baru (lihat ADR 0007 §B) di `ruleset-v2.ts` +
+      `sheetCatalog.ts` (katalog params generik menggantikan `takesNodeTypes`/`takesThreshold`) —
+      `CATALOG_COVERS_EVERY_KIND` tetap lulus, ≥2 test perilaku per kondisi/aksi baru, cek manual
+      390×844 untuk chip berparameter; hash **sengaja** di-regenerasi, disebut di commit.
+- [ ] **8.5** `docs/RULESET.md` diperluas di tempat (§5/§10-13 + §11a + §14 baru) dan koreksi §0
+      (tandai eksplisit "v1"); `docs/ADR/0008` (multi-entitas & checkpoint), `docs/ADR/0009` (riset
+      & ekonomi lokal, termasuk pelonggaran boundaries `shared → sim`); `docs/HANDOFF.md` ditulis
+      ulang, jebakan baru dicatat di §5.
+- [ ] **8.6** Pohon riset data: `packages/shared/src/research.ts` + `research-tree.ts` (±70 simpul,
+      5 cabang) + `unlocks.ts`, `eslint.config.js` `{ from: "shared", allow: ["sim"] }` — test
+      kelengkapan (tiap kind & pasangan node×tier tepat sekali di pohon), test tanpa siklus, test
+      starter set cukup untuk sheet legal tier 1.
+- [ ] **8.7** Riset di klien: `state/researchStore.ts`, `logic/unlocks.ts`, `screens/Research.tsx`
+      menggantikan placeholder, migrasi sekali-jalan untuk sheet/layout tersimpan, sumber Data di
+      Onboarding/Defend/VirusLab — test interaksi `@vitest/browser`: riset membuka item di picker,
+      item terkunci tak bisa dipakai, progres bertahan reload, sheet lama tetap legal.
+- [ ] **8.8** `tools/balance-lab`: dukungan parameter baru di generator, arketipe node/virus baru,
+      dimensi pita kedalaman riset di `dominance.ts`/`report.ts` — `known-dominance.ts` **kosong**,
+      job CI `balance-dominance` hijau, `REPORT.md` ter-regenerasi per pita.
+
 ---
 
 ## 4. Definition of Done (berlaku semua task)
