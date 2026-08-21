@@ -8,6 +8,7 @@ export * from "./ruleset-v2.js";
 export * from "./graph.js";
 export * from "./movement.js";
 export * from "./nodes/index.js";
+export * from "./nodes-v2/index.js";
 export * from "./blocks/index.js";
 export * from "./battle-common.js";
 export * from "./score.js";

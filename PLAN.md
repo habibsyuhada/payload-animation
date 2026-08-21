@@ -202,7 +202,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.1a** `packages/sim/src/types.ts`: `DefenseNodeType` jadi superset,
       `DEFENSE_NODE_TYPES_V1`/`V2` sebagai konstanta runtime, `DefenseNodeTypeV1` sebagai subtype —
       no-op murni, tidak ada file lain disentuh. `pnpm typecheck test` hijau, hash tidak bergerak.
-- [ ] **8.1b** Tabel & modul node v2: perluas `ruleset-v2.ts` (getter bersufiks `V2`), buat
+- [x] **8.1b** Tabel & modul node v2: perluas `ruleset-v2.ts` (getter bersufiks `V2`), buat
       `packages/sim/src/nodes-v2/` 1:1 dengan `DEFENSE_NODE_TYPES_V2` (angka awal = salinan persis
       v1) — test 1:1 structural; `nodes/` & `ruleset.ts` tidak tersentuh; hash tidak bergerak.
 - [ ] **8.1c** Arahkan `engine-v2.ts` ke `nodes-v2/` (hanya blok import) — hash `sheet-v2` tetap

@@ -245,3 +245,126 @@ export const DEFAULT_INTEGRITY_THRESHOLD_PERMILLE_V2 = 500;
 
 /** Default target for the two node-type conditions when a row doesn't carry one. */
 export const DEFAULT_CONDITION_TARGET_NODE_TYPES_V2: readonly DefenseNodeType[] = ["firewall"];
+
+/*
+ * --- Defense node tables (v2), ADR 0007 §"Memisah tabel node v2 dari v1 yang beku" ---
+ *
+ * engine-v2.ts used to read these numbers straight out of ruleset.ts (v1, frozen) via nodes/ —
+ * which meant no v2-only node type could ever be added, because the tables it would need to live
+ * in must never change once a "v1" BattleLog depends on them. These tables exist so v2 has numbers
+ * of its own to rebalance (RULESET.md §9's still-open "ICE Nest" fix, PLAN.md 8.2b) without
+ * touching a single byte of ruleset.ts.
+ *
+ * Fase 8 (8.1b) seeds every table below as an EXACT copy of the v1 numbers — this step is pure
+ * plumbing, not a rebalance, so v2 golden log hashes must not move. The five v2-only node types
+ * (patch-server, tarpit, jammer, turnstile, alarm) get their real entries in 8.2a, alongside the
+ * nodes-v2/ modules that read them.
+ */
+
+interface DefenseNodeCostEntryV2 {
+  readonly type: DefenseNodeType;
+  readonly tier?: BlockTier;
+  readonly costPoints: number;
+}
+
+/** Node costs, seeded from RULESET.md §5.1 (same as v1's DEFENSE_NODE_COSTS_V1). */
+const DEFENSE_NODE_COSTS_V2: readonly DefenseNodeCostEntryV2[] = [
+  { type: "router", costPoints: 1 },
+  { type: "entry", costPoints: 0 },
+  { type: "core", costPoints: 0 },
+  { type: "firewall", tier: 1, costPoints: 3 },
+  { type: "firewall", tier: 2, costPoints: 5 },
+  { type: "firewall", tier: 3, costPoints: 8 },
+  { type: "ice-sentry", tier: 1, costPoints: 4 },
+  { type: "ice-sentry", tier: 2, costPoints: 6 },
+  { type: "ice-sentry", tier: 3, costPoints: 9 },
+  { type: "honeypot", tier: 1, costPoints: 3 },
+  { type: "honeypot", tier: 2, costPoints: 5 },
+  { type: "honeypot", tier: 3, costPoints: 8 },
+  { type: "scanner", tier: 1, costPoints: 2 },
+  { type: "scanner", tier: 2, costPoints: 3 },
+  { type: "scanner", tier: 3, costPoints: 5 },
+  { type: "trap", tier: 1, costPoints: 2 },
+  { type: "trap", tier: 2, costPoints: 3 },
+  { type: "trap", tier: 3, costPoints: 5 },
+];
+
+export function getDefenseNodeCostV2(type: DefenseNodeType, tier?: BlockTier): number {
+  const entry = DEFENSE_NODE_COSTS_V2.find((candidate) => candidate.type === type && candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 defense node cost for type "${type}" tier ${tier ?? "(untiered)"}`);
+  }
+  return entry.costPoints;
+}
+
+/** All Breach nodes (Firewall, Core) take this much HP loss per tick from mere occupancy — seeded from BREACH_PASSIVE_DRAIN_V1 (RULESET.md §5.0). */
+export const BREACH_PASSIVE_DRAIN_V2 = 15;
+
+interface FirewallConfigV2 {
+  readonly tier: BlockTier;
+  readonly hp: number;
+  readonly counterDamagePerTick: number;
+}
+
+const FIREWALL_CONFIG_V2: readonly FirewallConfigV2[] = [
+  { tier: 1, hp: 500, counterDamagePerTick: 20 },
+  { tier: 2, hp: 800, counterDamagePerTick: 30 },
+  { tier: 3, hp: 1200, counterDamagePerTick: 45 },
+];
+
+export function getFirewallConfigV2(tier: BlockTier): FirewallConfigV2 {
+  const entry = FIREWALL_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 firewall config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface IceSentryConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly fireIntervalTicks: number;
+  readonly damage: number;
+  readonly accuracyPermille: number;
+}
+
+const ICE_SENTRY_CONFIG_V2: readonly IceSentryConfigV2[] = [
+  { tier: 1, radiusHops: 1, fireIntervalTicks: 4, damage: 60, accuracyPermille: 850 },
+  { tier: 2, radiusHops: 1, fireIntervalTicks: 3, damage: 85, accuracyPermille: 880 },
+  { tier: 3, radiusHops: 2, fireIntervalTicks: 3, damage: 115, accuracyPermille: 900 },
+];
+
+export function getIceSentryConfigV2(tier: BlockTier): IceSentryConfigV2 {
+  const entry = ICE_SENTRY_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 ICE Sentry config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface ScannerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly durationTicks: number;
+  readonly iceAccuracyBonusPermille: number;
+}
+
+const SCANNER_CONFIG_V2: readonly ScannerConfigV2[] = [
+  { tier: 1, radiusHops: 1, durationTicks: 6, iceAccuracyBonusPermille: 150 },
+  { tier: 2, radiusHops: 2, durationTicks: 8, iceAccuracyBonusPermille: 200 },
+  { tier: 3, radiusHops: 2, durationTicks: 10, iceAccuracyBonusPermille: 250 },
+];
+
+export function getScannerConfigV2(tier: BlockTier): ScannerConfigV2 {
+  const entry = SCANNER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 scanner config for tier ${tier}`);
+  }
+  return entry;
+}
+
+const TRAP_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 180, 2: 260, 3: 350 };
+
+export function getTrapDamageV2(tier: BlockTier): number {
+  return TRAP_DAMAGE_V2[tier];
+}
