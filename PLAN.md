@@ -216,7 +216,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.2b** Perbaikan "ICE Nest": satu tembakan ICE mengenai satu virus per tick, sentry lain
       tetap habiskan cooldown — test eksplisit dua sentry beririsan; hash `sheet-v2` **sengaja**
       di-regenerasi, disebut di commit.
-- [ ] **8.3a** Refactor state multi-entitas di `engine-v2.ts` dengan N selalu 1 (belum ada aksi
+- [x] **8.3a** Refactor state multi-entitas di `engine-v2.ts` dengan N selalu 1 (belum ada aksi
       split): `entities: VirusEntity[]`, pembagian global/per-entitas, urutan tick §11a (sentry di
       loop luar, satu draw per sentry menembak), skor via maksimum bukan jumlah — **semua hash &
       snapshot tidak bergerak**, 18 kasus `engine-v2.test.ts` hijau tanpa diedit.
