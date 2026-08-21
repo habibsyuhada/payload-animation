@@ -135,7 +135,7 @@ export const DEFENSE_ARCHETYPES: readonly DefenseArchetype[] = [
   {
     name: "Firewall Wall",
     description:
-      "Both entries converge onto ONE line: Trap I (2pt), Firewall II (5pt), ICE I riding the gap right after it (4pt) — 11pt total, every attacker takes the whole gauntlet, not just one branch of it.",
+      "Both entries converge onto ONE line: Trap I (2pt), Firewall I (3pt), ICE I close enough to cover both the firewall AND the Core beyond it (4pt) — 9pt total, every attacker takes the whole gauntlet, not just one branch of it (the pre-8.8 layout let a rush skip straight past whichever firewall it didn't happen to walk into).",
     graph: {
       nodes: [
         node(1, "entry"),
@@ -143,7 +143,7 @@ export const DEFENSE_ARCHETYPES: readonly DefenseArchetype[] = [
         node(3, "router"),
         node(4, "router"),
         node(8, "trap", 1),
-        node(5, "firewall", 2),
+        node(5, "firewall", 1),
         node(6, "ice-sentry", 1),
         node(9, "core"),
       ],
