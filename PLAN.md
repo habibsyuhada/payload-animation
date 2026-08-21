@@ -249,10 +249,13 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       & checkpoint, accepted) dan `docs/ADR/0009` (riset & ekonomi lokal, proposed — termasuk
       pelonggaran boundaries `shared → sim`) ditulis; `docs/HANDOFF.md` ditulis ulang untuk posisi
       Fase 8, jebakan baru (#19-22) dicatat di §5.
-- [ ] **8.6** Pohon riset data: `packages/shared/src/research.ts` + `research-tree.ts` (±70 simpul,
-      5 cabang) + `unlocks.ts`, `eslint.config.js` `{ from: "shared", allow: ["sim"] }` — test
-      kelengkapan (tiap kind & pasangan node×tier tepat sekali di pohon), test tanpa siklus, test
-      starter set cukup untuk sheet legal tier 1.
+- [x] **8.6** Pohon riset data: `packages/shared/src/research.ts` + `research-tree.ts` (102 simpul —
+      lebih dari perkiraan ±70 karena tiap `ConditionKind`/`ActionKind` butuh simpul dasarnya
+      sendiri (~82) plus tier-up nyata untuk 17 aksi bertier demi GDD §9, lihat komentar di kepala
+      `research-tree.ts`; 5 cabang, kedalaman 0–4) + `unlocks.ts`, `eslint.config.js`
+      `{ from: "shared", allow: ["sim"] }` — test kelengkapan (tiap `ConditionKind`/`ActionKind`
+      dan pasangan node×tier tepat sekali di pohon), test tanpa siklus & tanpa id gantung, test
+      starter set (Inti, depth 0) cukup untuk `validateVirusProgram()` meloloskan sheet tier 1.
 - [ ] **8.7** Riset di klien: `state/researchStore.ts`, `logic/unlocks.ts`, `screens/Research.tsx`
       menggantikan placeholder, migrasi sekali-jalan untuk sheet/layout tersimpan, sumber Data di
       Onboarding/Defend/VirusLab — test interaksi `@vitest/browser`: riset membuka item di picker,
