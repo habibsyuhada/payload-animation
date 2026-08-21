@@ -1143,7 +1143,11 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       };
       state.entities.push(clone);
       w.firedRuleIds.add(plan.split.ruleId);
-      events.push({ tick, type: "virus-split", actor: String(entity.id), target: String(clone.id), ...(canSplit ? { entityId: entity.id } : {}) });
+      // `delta` here is the resulting Integrity itself (both bodies land on the same number,
+      // "masing-masing"), not an amount lost — the same absolute-value convention `virus-respawned`
+      // uses (PLAN.md 8.3d), so a replay compiler can read one body's post-split Integrity off this
+      // single event instead of needing to notice a `virus-damaged` that was never logged.
+      events.push({ tick, type: "virus-split", actor: String(entity.id), target: String(clone.id), delta: sharedIntegrity, ...(canSplit ? { entityId: entity.id } : {}) });
       nextEntityId += 1;
     }
 

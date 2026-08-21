@@ -232,8 +232,9 @@ export type BattleEventType =
   | "rule-fired"
   /** v2 only, multi-entity (PLAN.md 8.3c): a `worm-split` action resolved. `entityId` is the body
    * that split (always present — this event can only exist when its sheet's `sheetCanSplit()` is
-   * true), `target` is the new body's id. Reuses no other event type because "one body is now two,
-   * both possibly at reduced Integrity" isn't a damage/repair/move on any single body. */
+   * true), `target` is the new body's id, `delta` is the Integrity BOTH bodies now have (absolute,
+   * same convention as `virus-respawned` — "masing-masing", not an amount lost). Reuses no other
+   * event type because "one body is now two" isn't a damage/repair/move on any single body. */
   | "virus-split";
 
 export interface BattleEvent {

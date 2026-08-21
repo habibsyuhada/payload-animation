@@ -2,7 +2,7 @@ import { simulate } from "@payload/sim";
 import type { BattleInput, DefenseGraph, DefenseNode } from "@payload/sim";
 import { describe, expect, it } from "vitest";
 import { battleTimeAt, computeCameraCues, deathMoment, overviewShot, playbackDuration, sampleCameraShot } from "../src/camera.js";
-import { compileTimeline, findNode, type Layout } from "../src/compile.js";
+import { compileTimeline, findNode, findTrack, samplePosition, type Layout } from "../src/compile.js";
 
 // entry(1)/(2) -> router(3) -> core(4), speed 50 — a long, uneventful trip (well over the 2.5s
 // climax lookback) so there's real room for a "follow" cue before the finish.
@@ -173,5 +173,119 @@ describe("deathMoment", () => {
     const timeline = shortTimeline();
     const moment = deathMoment(timeline)!;
     expect(moment.battleStart).toBe(0); // the whole short battle fits inside the 5s lookback
+  });
+});
+
+/** PLAN.md 8.3d/8.3e: Entry(1) -> Firewall III(2) -> Core(3), with a set-checkpoint. A tier I
+ * checkpoint's counter-damage (45/tick) kills the body long before it could ever destroy the
+ * Firewall alone, so it dies, respawns exactly once, then dies again permanently — two "died"
+ * markers in one log, only the second of which is the battle's real ending. */
+const RESPAWN_GRAPH: DefenseGraph = {
+  nodes: [
+    { id: 1, type: "entry" },
+    { id: 2, type: "firewall", tier: 3 },
+    { id: 3, type: "core" },
+  ] satisfies DefenseNode[],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 3,
+  coreHp: 600,
+};
+const RESPAWN_LAYOUT: Layout = { positions: { 1: { x: 0, y: 0 }, 2: { x: 200, y: 0 }, 3: { x: 500, y: 0 } } };
+const RESPAWN_INPUT: BattleInput = {
+  rulesetVersion: "v2",
+  seed: 7,
+  virus: {
+    events: [
+      { once: "battle", conditions: [], actions: [{ kind: "set-checkpoint", tier: 1 }], children: [] },
+      { conditions: [], actions: [{ kind: "move-toward-core" }], children: [] },
+    ],
+  },
+  defense: RESPAWN_GRAPH,
+};
+
+describe("terminalMarker / deathMoment — respawn (PLAN.md 8.3d/8.3e)", () => {
+  it("frames the battle's REAL ending, not an earlier respawn-triggering death", () => {
+    const log = simulate(RESPAWN_INPUT);
+    expect(log.result.winner).toBe("defender");
+    const respawnCount = log.events.filter((event) => event.type === "virus-respawned").length;
+    expect(respawnCount).toBe(1); // sanity: this scenario really does respawn once.
+    const deathCount = log.events.filter((event) => event.type === "virus-died").length;
+    expect(deathCount).toBe(2); // the respawn-triggering one, then the final one.
+
+    const timeline = compileTimeline(log, RESPAWN_LAYOUT);
+    const moment = deathMoment(timeline)!;
+    expect(moment).toBeDefined();
+    // The real ending is the LAST event in the log — deathMoment must land exactly there, not at
+    // the earlier "died" marker the respawn produced along the way.
+    expect(moment.battleEnd).toBeCloseTo(timeline.durationSeconds, 10);
+  });
+});
+
+/** PLAN.md 8.3e: a body born via `worm-split` that wanders off and dies well before the battle
+ * itself ends, so the follow cue has to notice entity 0 is gone and track someone else instead.
+ * Entry(1) -> Router(2, hub, splits+holds there) -> Firewall(3, lethal, entity 0's fate) / Firewall
+ * (5, via Router(4), entity 1's fate, further away so it survives longer). */
+const FOLLOW_SPLIT_GRAPH: DefenseGraph = {
+  nodes: [
+    { id: 1, type: "entry" },
+    { id: 2, type: "router" },
+    { id: 3, type: "firewall", tier: 1 },
+    { id: 4, type: "router" },
+    { id: 5, type: "firewall", tier: 1 },
+    { id: 6, type: "core" },
+  ] satisfies DefenseNode[],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 100 },
+    { from: 2, to: 4, lengthDu: 100 },
+    { from: 4, to: 5, lengthDu: 4000 },
+    { from: 3, to: 6, lengthDu: 100 },
+    { from: 5, to: 6, lengthDu: 100 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 6,
+  coreHp: 400,
+};
+const FOLLOW_SPLIT_LAYOUT: Layout = { positions: { 1: { x: 0, y: 0 }, 2: { x: 100, y: 0 }, 3: { x: 200, y: -50 }, 4: { x: 200, y: 50 }, 5: { x: 4200, y: 50 }, 6: { x: 4300, y: 0 } } };
+
+describe("sampleCameraShot — follow cue tracks a living body (PLAN.md 8.3e)", () => {
+  it("stops following entity 0 once it dies, and picks up the still-living clone instead", () => {
+    const input: BattleInput = {
+      rulesetVersion: "v2",
+      seed: 11,
+      virus: {
+        events: [
+          { once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }], children: [] },
+          { conditions: [], actions: [{ kind: "move-random" }], children: [] },
+        ],
+      },
+      defense: FOLLOW_SPLIT_GRAPH,
+    };
+    const log = simulate(input);
+    const timeline = compileTimeline(log, FOLLOW_SPLIT_LAYOUT);
+    const entity0 = findTrack(timeline, "virus")!;
+    const entity1 = findTrack(timeline, "virus:1");
+    expect(entity1, "expected this seed to actually split into two bodies").toBeDefined();
+
+    // Find a battle-time well after entity 0's own last event but still inside the "follow" cue's
+    // battle-time span (i.e. before the climax lookback swallows it).
+    const cues = computeCameraCues(timeline);
+    const follow = cues.find((cue) => cue.kind === "follow");
+    if (!follow) {
+      return; // this seed's battle was too short for a follow cue at all — nothing to assert here.
+    }
+    const lateFollowPlaybackT = follow.playbackEnd - 0.05;
+    const battleT = battleTimeAt(cues, lateFollowPlaybackT);
+    const shot = sampleCameraShot(timeline, cues, lateFollowPlaybackT);
+
+    // Whichever body the shot targets, it must be a LIVING one's actual position at that instant —
+    // never entity 0's stale last-known spot if entity 0 is already dead by then.
+    const entity0Position = samplePosition(entity0, battleT, { x: -1, y: -1 });
+    const candidates = [entity0Position, entity1 ? samplePosition(entity1, battleT, { x: -1, y: -1 }) : undefined].filter((position): position is { x: number; y: number } => position !== undefined);
+    expect(candidates.some((position) => Math.abs(position.x - shot.target.x) < 1e-6 && Math.abs(position.y - shot.target.y) < 1e-6)).toBe(true);
   });
 });

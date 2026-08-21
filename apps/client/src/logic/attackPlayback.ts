@@ -1,4 +1,4 @@
-import { compileTimeline, rulesFiringAt, sampleCoreHp, sampleIntegrity, samplePosition, type Timeline, type Vec2 } from "@payload/replay";
+import { compileTimeline, entityIdForTrackId, rulesFiringAt, sampleCoreHp, sampleIntegrityFor, samplePosition, trackIdForEntity, type Timeline, type Vec2 } from "@payload/replay";
 import type { BattleLog } from "@payload/sim";
 import type { DefendNode } from "../state/defendStore.js";
 
@@ -23,6 +23,10 @@ const OUTRO_SECONDS = 1.2;
 export interface Shot {
   /** Where the shot came from — an ICE Sentry's world position. */
   readonly from: Vec2;
+  /** Where it's headed — the specific body it hit (PLAN.md 8.3e), resolved here rather than left
+   * for the renderer to look up, so `Defend.tsx` never has to know which of `frame.viruses` a shot
+   * belongs to. Falls back to entity 0 for a shot with no `entityId` (a log that never splits). */
+  readonly to: Vec2;
   /** 0..1 through its visible life; 0 is the instant it fired. */
   readonly progress: number;
   readonly damage: number;
@@ -40,18 +44,37 @@ export interface NodeHit {
   readonly progress: number;
 }
 
-export interface PlaybackFrame {
-  readonly virusPosition: Vec2;
+/** One attacker body at this frame (PLAN.md 8.3e) — `entityId` 0 is always present, matching
+ * `Timeline.tracks`'s own guarantee that a "virus" track always exists. */
+export interface VirusBodyFrame {
+  readonly entityId: number;
+  readonly position: Vec2;
   /** 0..1 of starting Integrity. */
+  readonly integrity: number;
+  readonly alive: boolean;
+}
+
+export interface PlaybackFrame {
+  /** Entity 0's own position — kept as a scalar alias (PLAN.md 8.3e) so every caller written
+   * before `worm-split` existed keeps compiling and behaving identically for a battle that never
+   * splits. New code that wants every body should read `viruses` instead. */
+  readonly virusPosition: Vec2;
+  /** 0..1 of starting Integrity — entity 0's own, same aliasing as `virusPosition`. */
   readonly integrity: number;
   /** 0..1 of the Core's starting HP — the defender's own health bar. */
   readonly coreHp: number;
+  /** Entity 0's own — same aliasing as `virusPosition`. */
   readonly virusAlive: boolean;
-  /** Shots in flight right now, drawn from their sentry to the virus. */
+  /** Every body currently tracked, entity 0 included (PLAN.md 8.3e) — one entry per
+   * `Timeline.tracks` track, in ascending entity id order. */
+  readonly viruses: readonly VirusBodyFrame[];
+  /** Shots in flight right now, drawn from their sentry to whichever body they hit. */
   readonly shots: readonly Shot[];
   readonly flashes: readonly NodeFlash[];
-  /** Damage taken within the last effect window, for the floating "-60" numbers. */
-  readonly recentHits: readonly { readonly damage: number; readonly progress: number }[];
+  /** Damage taken within the last effect window, for the floating "-60" numbers — one entry per
+   * body (PLAN.md 8.3e: keyed by `entityId`, not a single shared key, so two bodies hit in the
+   * same window don't collapse into one floating number at the wrong position). */
+  readonly recentHits: readonly { readonly damage: number; readonly progress: number; readonly entityId: number }[];
   /** Damage the virus dealt to nodes in the same window — what the Core losing HP looks like. */
   readonly nodeHits: readonly NodeHit[];
   /** Rule ids (row paths, see gauntletViruses.ts) whose actions had an effect within the same
@@ -80,14 +103,25 @@ export function playbackDurationSeconds(timeline: Timeline): number {
  * exactly the frame it produced on the way forward.
  */
 export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
-  const track = timeline.tracks.find((candidate) => candidate.id === "virus");
   const fallback = timeline.nodes[0]?.position ?? { x: 0, y: 0 };
-  const virusPosition = track ? samplePosition(track, t, fallback) : fallback;
-  const died = timeline.markers.find((marker) => marker.kind === "died");
+  const positionForEntity = (entityId: number): Vec2 => {
+    const track = timeline.tracks.find((candidate) => candidate.id === trackIdForEntity(entityId));
+    return track ? samplePosition(track, t, fallback) : fallback;
+  };
+
+  const viruses: VirusBodyFrame[] = timeline.tracks
+    .map((track) => entityIdForTrackId(track.id))
+    .sort((a, b) => a - b)
+    .map((entityId) => {
+      const integrity = sampleIntegrityFor(timeline, entityId, t);
+      return { entityId, position: positionForEntity(entityId), integrity, alive: integrity > 0 };
+    });
+  // Entity 0's track always exists (Timeline.tracks' own guarantee), so this is never undefined.
+  const entity0 = viruses.find((virus) => virus.entityId === 0)!;
 
   const shots: Shot[] = [];
   const flashes: NodeFlash[] = [];
-  const recentHits: { damage: number; progress: number }[] = [];
+  const recentHits: { damage: number; progress: number; entityId: number }[] = [];
   const nodeHits: NodeHit[] = [];
   for (const marker of timeline.markers) {
     if (marker.t > t || t - marker.t > EFFECT_WINDOW_SECONDS) {
@@ -95,14 +129,17 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
     }
     const progress = (t - marker.t) / EFFECT_WINDOW_SECONDS;
     const node = timeline.nodes.find((candidate) => candidate.id === marker.nodeId);
+    // Absent on a battle that never splits (sheetCanSplit()'s static gate, PLAN.md 8.3b) — falls
+    // back to the only body such a battle ever has.
+    const entityId = marker.entityId ?? 0;
     if (marker.kind === "damage" && node?.type === "ice-sentry") {
-      shots.push({ from: node.position, progress, damage: marker.amount ?? 0 });
+      shots.push({ from: node.position, to: positionForEntity(entityId), progress, damage: marker.amount ?? 0 });
     }
     if (marker.kind === "damage" && node) {
       flashes.push({ nodeId: node.id, progress, kind: "damage" });
       // Damage dealt BY a node is damage taken by the virus (see the sim's event vocabulary:
       // "virus-damaged" names its source in `actor`), which is what the floating number reports.
-      recentHits.push({ damage: marker.amount ?? 0, progress });
+      recentHits.push({ damage: marker.amount ?? 0, progress, entityId });
     }
     // Damage the virus dealt TO a node: the Core being drained, a Firewall being chewed through.
     if (marker.kind === "node-hit" && node) {
@@ -118,16 +155,18 @@ export function frameAt(timeline: Timeline, t: number): PlaybackFrame {
   }
 
   return {
-    virusPosition,
-    integrity: sampleIntegrity(timeline, t),
+    virusPosition: entity0.position,
+    integrity: entity0.integrity,
     coreHp: sampleCoreHp(timeline, t),
-    virusAlive: !died || t < died.t,
+    virusAlive: entity0.alive,
+    viruses,
     shots,
     flashes: newestPerKey(flashes, (flash) => `${flash.nodeId}:${flash.kind}`),
     // A Core being drained takes damage EVERY tick (20ms apart) while the effect window is 300ms,
     // so without this the same spot carries half a dozen stacked numbers that no one can read.
-    // One number per victim, the freshest, reads as a steady beat of damage instead of a pile.
-    recentHits: newestPerKey(recentHits, () => "virus"),
+    // One number per victim, the freshest, reads as a steady beat of damage instead of a pile —
+    // keyed per body (PLAN.md 8.3e) so two bodies hit in the same window don't collapse into one.
+    recentHits: newestPerKey(recentHits, (hit) => String(hit.entityId)),
     nodeHits: newestPerKey(nodeHits, (hit) => String(hit.nodeId)),
     firedRuleIds: rulesFiringAt(timeline, t, EFFECT_WINDOW_SECONDS),
     done: t >= playbackDurationSeconds(timeline),

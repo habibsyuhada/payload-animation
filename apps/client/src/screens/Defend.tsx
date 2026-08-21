@@ -725,58 +725,64 @@ export function Defend(): JSX.Element {
                     </g>
                   ))}
 
-                {/* ICE Sentry fire: a tracer snapping from the sentry to wherever the virus is,
-                plus a muzzle flare, so a hit is something you see rather than infer. */}
+                {/* ICE Sentry fire: a tracer snapping from the sentry to whichever body it hit
+                (PLAN.md 8.3e), plus a muzzle flare, so a hit is something you see rather than infer. */}
                 {playbackFrame.shots.map((shot, index) => (
                   <g key={`shot-${index}`} data-testid="defend-playback-shot">
-                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke={FIRE_RANGE_COLOR} strokeWidth={6} strokeLinecap="round" opacity={(1 - shot.progress) * 0.35} />
-                    <line x1={shot.from.x} y1={shot.from.y} x2={playbackFrame.virusPosition.x} y2={playbackFrame.virusPosition.y} stroke="#eaf6ff" strokeWidth={2} strokeLinecap="round" opacity={1 - shot.progress} />
+                    <line x1={shot.from.x} y1={shot.from.y} x2={shot.to.x} y2={shot.to.y} stroke={FIRE_RANGE_COLOR} strokeWidth={6} strokeLinecap="round" opacity={(1 - shot.progress) * 0.35} />
+                    <line x1={shot.from.x} y1={shot.from.y} x2={shot.to.x} y2={shot.to.y} stroke="#eaf6ff" strokeWidth={2} strokeLinecap="round" opacity={1 - shot.progress} />
                     <circle cx={shot.from.x} cy={shot.from.y} r={10 + shot.progress * 10} fill="none" stroke={FIRE_RANGE_COLOR} strokeWidth={3} opacity={1 - shot.progress} />
                   </g>
                 ))}
 
-                {playbackFrame.virusAlive ? (
-                  <g data-testid="defend-playback-virus">
-                    {/* Impact flash: the virus itself flares red the moment it's hit. */}
-                    {playbackFrame.recentHits.map((hit, index) => (
-                      <circle key={`hit-${index}`} cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16 + hit.progress * 18} fill="none" stroke={theme.faction.attack} strokeWidth={3} opacity={1 - hit.progress} />
-                    ))}
-                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={16} fill={theme.faction.attack} opacity={0.18} />
-                    <circle cx={playbackFrame.virusPosition.x} cy={playbackFrame.virusPosition.y} r={9} fill="#eaf6ff" />
-
-                    {/* Health bar rides BELOW the virus, in world units so it scales with the map —
-                    above is where each node prints its own name, and the two collided there. */}
-                    <rect x={playbackFrame.virusPosition.x - 26} y={playbackFrame.virusPosition.y + 16} width={52} height={9} rx={4.5} fill="#000" opacity={0.6} />
-                    <rect
-                      data-testid="defend-playback-hp"
-                      data-integrity={Math.round(playbackFrame.integrity * 100)}
-                      x={playbackFrame.virusPosition.x - 24.5}
-                      y={playbackFrame.virusPosition.y + 17.5}
-                      width={49 * playbackFrame.integrity}
-                      height={6}
-                      rx={3}
-                      fill={playbackFrame.integrity > 0.5 ? theme.faction.stealth : playbackFrame.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
-                    />
-                    {/* Labelled because the virus parks ON the Core for most of a battle, where an
-                    unlabelled bar is indistinguishable from the Core's own. */}
-                    <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y + 36} textAnchor="middle" fontSize={11} fontWeight={700} fill={theme.textMuted}>
-                      Virus {Math.round(playbackFrame.integrity * 100)}%
-                    </text>
-
-                    {/* Floating damage numbers, drifting up as they fade. */}
-                    {playbackFrame.recentHits
-                      .filter((hit) => hit.damage > 0)
-                      .map((hit, index) => (
-                        <text key={`dmg-${index}`} data-testid="defend-playback-damage" x={playbackFrame.virusPosition.x + 22} y={playbackFrame.virusPosition.y - 8 - hit.progress * 22} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
-                          -{hit.damage}
-                        </text>
+                {/* One body per split entity (PLAN.md 8.3e) — a battle that never splits renders
+                exactly the one entry it always did. */}
+                {playbackFrame.viruses.map((virus) => {
+                  const recentHits = playbackFrame.recentHits.filter((hit) => hit.entityId === virus.entityId);
+                  return virus.alive ? (
+                    <g key={`virus-${virus.entityId}`} data-testid="defend-playback-virus" data-entity-id={virus.entityId}>
+                      {/* Impact flash: the body itself flares red the moment it's hit. */}
+                      {recentHits.map((hit, index) => (
+                        <circle key={`hit-${index}`} cx={virus.position.x} cy={virus.position.y} r={16 + hit.progress * 18} fill="none" stroke={theme.faction.attack} strokeWidth={3} opacity={1 - hit.progress} />
                       ))}
-                  </g>
-                ) : (
-                  <text x={playbackFrame.virusPosition.x} y={playbackFrame.virusPosition.y} textAnchor="middle" fontSize={20} fill={theme.faction.attack}>
-                    ✖
-                  </text>
-                )}
+                      <circle cx={virus.position.x} cy={virus.position.y} r={16} fill={theme.faction.attack} opacity={0.18} />
+                      <circle cx={virus.position.x} cy={virus.position.y} r={9} fill="#eaf6ff" />
+
+                      {/* Health bar rides BELOW the body, in world units so it scales with the map —
+                      above is where each node prints its own name, and the two collided there. */}
+                      <rect x={virus.position.x - 26} y={virus.position.y + 16} width={52} height={9} rx={4.5} fill="#000" opacity={0.6} />
+                      <rect
+                        data-testid="defend-playback-hp"
+                        data-entity-id={virus.entityId}
+                        data-integrity={Math.round(virus.integrity * 100)}
+                        x={virus.position.x - 24.5}
+                        y={virus.position.y + 17.5}
+                        width={49 * virus.integrity}
+                        height={6}
+                        rx={3}
+                        fill={virus.integrity > 0.5 ? theme.faction.stealth : virus.integrity > 0.25 ? theme.faction.sensor : theme.faction.attack}
+                      />
+                      {/* Labelled because a body parks ON the Core for most of a battle, where an
+                      unlabelled bar is indistinguishable from the Core's own. */}
+                      <text x={virus.position.x} y={virus.position.y + 36} textAnchor="middle" fontSize={11} fontWeight={700} fill={theme.textMuted}>
+                        {virus.entityId === 0 ? "Virus" : `Virus #${virus.entityId}`} {Math.round(virus.integrity * 100)}%
+                      </text>
+
+                      {/* Floating damage numbers, drifting up as they fade. */}
+                      {recentHits
+                        .filter((hit) => hit.damage > 0)
+                        .map((hit, index) => (
+                          <text key={`dmg-${index}`} data-testid="defend-playback-damage" x={virus.position.x + 22} y={virus.position.y - 8 - hit.progress * 22} fontSize={14} fontWeight={700} fill={theme.faction.attack} opacity={1 - hit.progress}>
+                            -{hit.damage}
+                          </text>
+                        ))}
+                    </g>
+                  ) : (
+                    <text key={`virus-${virus.entityId}`} x={virus.position.x} y={virus.position.y} textAnchor="middle" fontSize={20} fill={theme.faction.attack}>
+                      ✖
+                    </text>
+                  );
+                })}
               </g>
             )}
           </g>

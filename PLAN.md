@@ -229,11 +229,12 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.3d** Aksi `set-checkpoint`: respawn mengonsumsi `died` (bukan memintasnya), invariant
       "integrity naik dari 0 hanya lewat `virus-respawned`" — `engine-v2.test.ts:285` (Self Repair
       tidak membangkitkan) lulus tanpa diedit; hash tetap.
-- [ ] **8.3e** Replay & klien multi-track: `compile.ts` (id track `"virus"` untuk entitas 0,
+- [x] **8.3e** Replay & klien multi-track: `compile.ts` (id track `"virus"` untuk entitas 0,
       `virusIntegrityByEntity`), `camera.ts` (`terminalMarker`/follow-cam multi-entitas), `draw.ts`
       (N paket, tracer per entitas), `attackPlayback.ts`/`Defend.tsx` (`frame.viruses[]`) — kasus
       satu-entitas di `compile.test.ts`/`camera.test.ts`/`draw.test.ts` lulus tanpa diedit; battle
-      split menampilkan dua tubuh dengan health bar independen.
+      split menampilkan dua tubuh dengan health bar independen (diverifikasi via test baru yang
+      benar-benar men-split, bukan cuma fixture satu-entitas).
 - [ ] **8.4** 17 kondisi & 13 aksi baru (lihat ADR 0007 §B) di `ruleset-v2.ts` +
       `sheetCatalog.ts` (katalog params generik menggantikan `takesNodeTypes`/`takesThreshold`) —
       `CATALOG_COVERS_EVERY_KIND` tetap lulus, ≥2 test perilaku per kondisi/aksi baru, cek manual

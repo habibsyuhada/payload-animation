@@ -528,6 +528,7 @@ describe("worm-split (8.3c)", () => {
     expect(split!.actor).toBe("0");
     expect(split!.target).toBe("1");
     expect(split!.entityId).toBe(0);
+    expect(split!.delta).toBe(500); // tier I's 500‰ share of the pre-split 1000 Integrity.
     // Both bodies now carry entityId on their own events — proof the second body is a real,
     // independently-tracked entity, not a label on the same one.
     expect(log.events.some((event) => event.type === "virus-entered-node" && event.entityId === 1)).toBe(true);
