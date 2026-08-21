@@ -213,7 +213,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.2a** Lima node baru (Patch Server, Tarpit, Jammer, Turnstile, Alarm Relay — lihat ADR 0007
       §A) + urutan tick baru (Jammer sebelum sensor sweep, Patch Server paling akhir) — ≥3 test
       perilaku per node baru, hash tetap (belum dipakai skenario golden).
-- [ ] **8.2b** Perbaikan "ICE Nest": satu tembakan ICE mengenai satu virus per tick, sentry lain
+- [x] **8.2b** Perbaikan "ICE Nest": satu tembakan ICE mengenai satu virus per tick, sentry lain
       tetap habiskan cooldown — test eksplisit dua sentry beririsan; hash `sheet-v2` **sengaja**
       di-regenerasi, disebut di commit.
 - [ ] **8.3a** Refactor state multi-entitas di `engine-v2.ts` dengan N selalu 1 (belum ada aksi

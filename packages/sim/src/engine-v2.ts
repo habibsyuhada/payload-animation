@@ -687,6 +687,14 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     }
     const alarmActive = tick < state.alarmActiveUntilTick;
 
+    // ICE Nest fix (RULESET.md §9/§13, HANDOFF §2a): a virus takes at most one ICE Sentry hit per
+    // tick. Every off-cooldown, in-range, uncloaked sentry still rolls and still consumes its own
+    // cooldown on this tick — the fix is which HIT lands, not how many shots are taken, so radius
+    // overlap stops being free (a second sentry is no longer a perfect backup for the first) while
+    // RNG draw count/order stays exactly what it was before this fix for every existing scenario.
+    // Winner = lowest node id among sentries that actually roll a hit this tick (iceSentryNodes is
+    // sorted ascending, so "first hit encountered in this loop" already is that).
+    let virusHitByIceThisTick = false;
     for (const iceNode of iceSentryNodes) {
       if (cloakActive) {
         continue;
@@ -704,9 +712,10 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       const hit = rollIceSentryHitV2(rng, accuracy);
       const fireInterval = alarmActive ? Math.max(1, config.fireIntervalTicks - ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS) : config.fireIntervalTicks;
       state.iceNextFireTick.set(iceNode.id, tick + fireInterval);
-      if (!hit) {
+      if (!hit || virusHitByIceThisTick) {
         continue;
       }
+      virusHitByIceThisTick = true;
       if (tryAbsorbWithDecoy()) {
         events.push({ tick, type: "decoy-absorbed", actor: String(iceNode.id), target: "virus" });
       } else {
