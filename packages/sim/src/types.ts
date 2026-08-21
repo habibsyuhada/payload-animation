@@ -134,7 +134,18 @@ export type ActionKind =
   // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c/8.3d).
   | "worm-split"
   | "detonate"
-  | "set-checkpoint";
+  | "set-checkpoint"
+  // v2-only, PLAN.md 8.4.
+  | "move-toward-node-type"
+  | "sprint"
+  | "recall"
+  | "target-strike"
+  | "emp-burst"
+  | "overclock"
+  | "spoof-signature"
+  | "purge"
+  | "siphon"
+  | "set-flag";
 
 /**
  * How often an event may fire.

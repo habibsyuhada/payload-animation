@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { getCloakConfigV2, MIN_EVERY_N_TICKS_V2 } from "../src/ruleset-v2.js";
+import {
+  getCloakConfigV2,
+  getEmpBurstConfigV2,
+  getSpoofSignatureDurationTicksV2,
+  MIN_EVERY_N_TICKS_V2,
+  OVERCLOCK_COOLDOWN_TICKS_V2,
+  OVERCLOCK_DURATION_TICKS_V2,
+  SPOOF_SIGNATURE_COOLDOWN_TICKS_V2,
+} from "../src/ruleset-v2.js";
 import { simulate } from "../src/simulate.js";
 import type { BattleEvent, BattleInputV2, BattleLog, DefenseGraph, DefenseNode, SheetEvent } from "../src/types.js";
 
@@ -170,6 +178,36 @@ const ALARM_GRAPH: DefenseGraph = {
   coreHp: 400,
 };
 
+/** Entry 1 -> Router 2, branching to Firewall 3 (which continues to Core 5) or a dead-end Scanner 4
+ * one hop away in the other direction — proof `move-toward-node-type` picks a DIFFERENT direction
+ * than the default shortest-path-to-Core would. */
+const NODE_TYPE_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "firewall", 1), node(4, "scanner", 1), node(5, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 3, to: 5, lengthDu: 300 },
+    { from: 2, to: 4, lengthDu: 200 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 5,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Router 2 -> Router 3 -> Core 4, a straight line with two waypoints so a checkpoint set
+ * at the first can be recalled to from the second. */
+const RECALL_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "router"), node(4, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 3, to: 4, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 4,
+  coreHp: 400,
+};
+
 function battle(events: readonly SheetEvent[], defense: DefenseGraph = FIREWALL_LINE, seed = 7): BattleLog {
   const input: BattleInputV2 = { rulesetVersion: "v2", seed, virus: { events }, defense };
   return simulate(input);
@@ -182,6 +220,12 @@ function firedRules(log: BattleLog): string[] {
 function nodeDamageTo(log: BattleLog, nodeId: number): number {
   return log.events
     .filter((event: BattleEvent) => event.type === "node-damaged" && event.target === String(nodeId))
+    .reduce((sum, event) => sum + Math.abs(event.delta ?? 0), 0);
+}
+
+function nodeDamageToWithinTicks(log: BattleLog, nodeId: number, minTick: number, maxTick: number): number {
+  return log.events
+    .filter((event: BattleEvent) => event.type === "node-damaged" && event.target === String(nodeId) && event.tick >= minTick && event.tick < maxTick)
     .reduce((sum, event) => sum + Math.abs(event.delta ?? 0), 0);
 }
 
@@ -780,5 +824,238 @@ describe("new conditions (8.4)", () => {
     );
     const fewAfterSplit = afterSplit.events.filter((event) => event.type === "rule-fired" && event.actor === "few" && event.tick > 7);
     expect(fewAfterSplit).toHaveLength(0); // 2 bodies alive is never < 2.
+  });
+});
+
+describe("new actions (8.4)", () => {
+  describe("move-toward-node-type", () => {
+    it("heads for the nearest live node of the requested type, a different direction than Core", () => {
+      const log = battle(
+        [
+          row({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "move-toward-node-type", targetNodeTypes: ["scanner"] }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        NODE_TYPE_GRAPH,
+      );
+      // The default shortest path from Router never touches the Scanner branch at all.
+      expect(log.events.some((event) => event.type === "virus-entered-node" && event.target === "4")).toBe(true);
+    });
+
+    it("falls back to Core's own path when no node of the requested type is reachable", () => {
+      const withType = battle([row({ actions: [{ kind: "move-toward-node-type", targetNodeTypes: ["scanner"] }] })], FIREWALL_LINE);
+      const plain = battle([row({ actions: [{ kind: "move-toward-core" }] })], FIREWALL_LINE);
+      const positions = (log: BattleLog): (string | undefined)[] => log.events.filter((event) => event.type === "virus-entered-node").map((event) => event.target);
+      expect(positions(withType)).toEqual(positions(plain));
+    });
+  });
+
+  describe("sprint", () => {
+    it("pays its Integrity cost the instant the rule fires, even while blocked from moving", () => {
+      const log = battle([row({ id: "sprint", actions: [{ kind: "sprint", tier: 1 }, { kind: "hold-position" }] })], QUIET_LINE);
+      const costs = log.events.filter((event) => event.type === "virus-damaged" && event.actor === "sprint");
+      expect(costs.length).toBeGreaterThan(1);
+      expect(costs[0]!.delta).toBe(-6); // tier I's flat per-tick cost.
+      // Every cost is -6 except possibly the very last one, clamped by however much Integrity remained.
+      expect(costs.every((event) => event.delta! <= 0 && event.delta! >= -6)).toBe(true);
+      expect(log.events.some((event) => event.type === "rule-fired" && event.actor === "sprint")).toBe(true);
+    });
+
+    it("crosses an edge faster than the same movement without it", () => {
+      const sprinting = battle([row({ actions: [{ kind: "sprint", tier: 3 }, { kind: "move-toward-core" }] })], FIREWALL_LINE);
+      const plain = battle([row({ actions: [{ kind: "move-toward-core" }] })], FIREWALL_LINE);
+      const firstArrival = (log: BattleLog): number => log.events.find((event) => event.type === "virus-entered-node" && event.target === "3")!.tick;
+      expect(firstArrival(sprinting)).toBeLessThan(firstArrival(plain));
+    });
+  });
+
+  describe("recall", () => {
+    it("paths back to the checkpointed node once triggered", () => {
+      const log = battle(
+        [
+          row({ id: "checkpoint", once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "set-checkpoint", tier: 1 }] }),
+          // Deliberately no `once` — "core-within-hops" reads ahead onto an in-transit edge's far
+          // end (existing 8.4 semantics), so the checkpoint sends the body back and forth between
+          // the two Routers forever once armed; that oscillation is exactly the proof this test wants.
+          row({ id: "recall", conditions: [{ kind: "core-within-hops", hops: 1 }], actions: [{ kind: "recall" }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        RECALL_GRAPH,
+      );
+      const arrivalsAt2 = log.events.filter((event) => event.type === "virus-entered-node" && event.target === "2");
+      // Once from the original approach, once more from being recalled back to it.
+      expect(arrivalsAt2.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("does nothing when no checkpoint has been armed — the body simply never departs", () => {
+      const log = battle([row({ actions: [{ kind: "recall" }] })], QUIET_LINE);
+      expect(log.events.some((event) => event.type === "virus-departed-node")).toBe(false);
+      expect(log.result.winner).toBe("defender");
+    });
+  });
+
+  describe("target-strike", () => {
+    it("damages, then destroys, the nearest live support node within 1 hop — lowest id first", () => {
+      const log = battle(
+        [
+          row({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "target-strike", tier: 1 }, { kind: "hold-position" }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        ICE_SCANNER_GRAPH,
+      );
+      const iceDestroyed = log.events.find((event) => event.type === "node-destroyed" && event.target === "3");
+      expect(iceDestroyed).toBeDefined(); // ICE Sentry (id 3) beats Scanner (id 4) on the tie-break.
+      // After the ICE Sentry is gone, the next hits land on the Scanner instead.
+      const scannerDamage = log.events.find((event) => event.type === "node-damaged" && event.target === "4" && event.tick > iceDestroyed!.tick);
+      expect(scannerDamage).toBeDefined();
+    });
+
+    it("never fires the rule when nothing destructible is in range", () => {
+      const log = battle([row({ id: "strike", actions: [{ kind: "target-strike", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })], QUIET_LINE);
+      expect(firedRules(log)).not.toContain("strike");
+    });
+  });
+
+  describe("emp-burst", () => {
+    it("disables every support node in radius, so a freshly-arrived ICE Sentry never gets to fire during the window", () => {
+      const log = battle(
+        [
+          row({ id: "emp", once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "emp-burst", tier: 1 }, { kind: "hold-position" }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        ICE_SCANNER_GRAPH,
+      );
+      const empEvent = log.events.find((event) => event.type === "status-applied" && event.actor === "emp-burst")!;
+      expect(empEvent).toBeDefined();
+      const config = getEmpBurstConfigV2(1);
+      const damageDuringWindow = log.events.filter(
+        (event) => event.type === "virus-damaged" && event.actor === "3" && event.tick >= empEvent.tick && event.tick < empEvent.tick + config.disableDurationTicks,
+      );
+      expect(damageDuringWindow).toHaveLength(0);
+    });
+
+    it("never fires the rule when nothing is in range to disable", () => {
+      const log = battle([row({ id: "emp", actions: [{ kind: "emp-burst", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })], QUIET_LINE);
+      expect(firedRules(log)).not.toContain("emp");
+    });
+  });
+
+  describe("overclock", () => {
+    it("multiplies attack damage while active", () => {
+      const overclocked = battle(
+        [row({ once: "battle", actions: [{ kind: "overclock", tier: 1 }] }), row({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-toward-core" }] })],
+        HARD_FIREWALL_LINE,
+      );
+      const baseline = battle([row({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-toward-core" }] })], HARD_FIREWALL_LINE);
+      // Both bodies reach the Firewall at the same tick (identical movement) and Overclock is
+      // active for its whole 20-tick window from tick 0 — compare damage in that shared window.
+      expect(nodeDamageToWithinTicks(overclocked, 3, 6, OVERCLOCK_DURATION_TICKS_V2)).toBeGreaterThan(nodeDamageToWithinTicks(baseline, 3, 6, OVERCLOCK_DURATION_TICKS_V2));
+    });
+
+    it("won't reactivate until its cooldown elapses", () => {
+      const log = battle([row({ actions: [{ kind: "overclock", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+      const ticks = log.events.filter((event) => event.type === "status-applied" && event.actor === "overclock").map((event) => event.tick);
+      expect(ticks[0]).toBe(0);
+      expect(ticks[1]).toBe(OVERCLOCK_DURATION_TICKS_V2 + OVERCLOCK_COOLDOWN_TICKS_V2);
+    });
+  });
+
+  describe("spoof-signature", () => {
+    it("wipes an active scan immediately and blocks new ones for its duration", () => {
+      const log = battle(
+        [
+          row({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "hold-position" }] }),
+          row({ id: "spoof", once: "battle", conditions: [{ kind: "is-scanned" }], actions: [{ kind: "spoof-signature", tier: 1 }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        ICE_SCANNER_GRAPH,
+      );
+      const spoofTick = log.events.find((event) => event.type === "rule-fired" && event.actor === "spoof")!.tick;
+      const duration = getSpoofSignatureDurationTicksV2(1);
+      // A scan DID land before the spoof — proving the absence below isn't just "never scanned".
+      expect(log.events.some((event) => event.type === "status-applied" && event.actor === "4" && event.tick < spoofTick)).toBe(true);
+      const scansDuringWindow = log.events.filter((event) => event.type === "status-applied" && event.actor === "4" && event.tick >= spoofTick && event.tick < spoofTick + duration);
+      expect(scansDuringWindow).toHaveLength(0);
+    });
+
+    it("won't reactivate until its cooldown elapses", () => {
+      const log = battle([row({ actions: [{ kind: "spoof-signature", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+      const ticks = log.events.filter((event) => event.type === "status-applied" && event.actor === "spoof-signature").map((event) => event.tick);
+      const duration = getSpoofSignatureDurationTicksV2(1);
+      expect(ticks[0]).toBe(0);
+      expect(ticks[1]).toBe(duration + SPOOF_SIGNATURE_COOLDOWN_TICKS_V2);
+    });
+  });
+
+  describe("purge", () => {
+    it("suppresses Tarpit's speed penalty for its duration, reaching Core sooner", () => {
+      const withoutPurge = battle([row({ actions: [{ kind: "move-toward-core" }] })], TARPIT_GRAPH);
+      const withPurge = battle([row({ once: "battle", actions: [{ kind: "purge", tier: 3 }] }), row({ actions: [{ kind: "move-toward-core" }] })], TARPIT_GRAPH);
+      const arrival = (log: BattleLog): number => log.events.find((event) => event.type === "virus-entered-node" && event.target === "4")!.tick;
+      expect(arrival(withPurge)).toBeLessThan(arrival(withoutPurge));
+    });
+
+    it("credits the rule only once it actually extends the immunity window already in place", () => {
+      const log = battle(
+        [
+          // Tier III grants immunity through tick 20 at tick 0; tier I's own +10-tick window only
+          // starts outrunning that once its own trigger tick exceeds 10 — i.e. tick 11 onward.
+          row({ id: "small", conditions: [{ kind: "tick-after", ticks: 5 }], actions: [{ kind: "purge", tier: 1 }] }),
+          row({ id: "big", once: "battle", actions: [{ kind: "purge", tier: 3 }] }),
+          row({ actions: [{ kind: "move-toward-core" }] }),
+        ],
+        TARPIT_GRAPH,
+      );
+      const smallFired = log.events.filter((event) => event.type === "rule-fired" && event.actor === "small").map((event) => event.tick);
+      expect(smallFired.length).toBeGreaterThan(0);
+      expect(Math.min(...smallFired)).toBeGreaterThanOrEqual(11);
+    });
+  });
+
+  describe("siphon", () => {
+    it("heals off this body's own attack output the tick it lands", () => {
+      const withSiphon = battle([row({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "siphon", tier: 3 }, { kind: "move-toward-core" }] })], HARD_FIREWALL_LINE);
+      expect(withSiphon.events.some((event) => event.type === "virus-repaired" && event.actor === "siphon")).toBe(true);
+      const plain = battle([row({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-toward-core" }] })], HARD_FIREWALL_LINE);
+      // Both bodies reach the Firewall at the same tick and take the same counter-damage; net
+      // Integrity change (damage + repair) through a fixed early tick — well before either the
+      // Firewall or the virus could actually be destroyed — is measurably better with Siphon.
+      const netIntegrityChange = (log: BattleLog, throughTick: number): number =>
+        log.events
+          .filter((event) => (event.type === "virus-damaged" || event.type === "virus-repaired") && event.tick <= throughTick)
+          .reduce((sum, event) => sum + (event.delta ?? 0), 0);
+      expect(netIntegrityChange(withSiphon, 12)).toBeGreaterThan(netIntegrityChange(plain, 12));
+    });
+
+    it("stays silent when Integrity is already full — a row that ran is not a row that fired", () => {
+      // At tick 0, standing on the Entry (not a Breach Node yet) with full Integrity: the row runs
+      // every tick, but never once raises Integrity above its already-full starting value.
+      const log = battle([row({ id: "siphon", actions: [{ kind: "brute-force", tier: 1 }, { kind: "siphon", tier: 3 }] })], QUIET_LINE);
+      expect(log.events.some((event) => event.type === "rule-fired" && event.actor === "siphon" && event.tick === 0)).toBe(false);
+    });
+  });
+
+  describe("set-flag", () => {
+    it("writes a flag that flag-is only reads starting the NEXT tick, never the one it was set on", () => {
+      const log = battle(
+        [
+          row({ id: "set", once: "battle", actions: [{ kind: "set-flag", flagIndex: 0, flagValue: true }] }),
+          row({ id: "probe", conditions: [{ kind: "flag-is", flagIndex: 0 }], actions: [{ kind: "cloak", tier: 1 }] }),
+          row({ actions: [{ kind: "hold-position" }] }),
+        ],
+        QUIET_LINE,
+      );
+      const setTick = log.events.find((event) => event.type === "rule-fired" && event.actor === "set")!.tick;
+      const probeTicks = log.events.filter((event) => event.type === "rule-fired" && event.actor === "probe").map((event) => event.tick);
+      expect(probeTicks).not.toContain(setTick);
+      expect(probeTicks.every((tick) => tick > setTick)).toBe(true);
+      expect(probeTicks.length).toBeGreaterThan(0);
+    });
+
+    it("credits the rule only on the tick it actually changes the flag's value", () => {
+      const log = battle([row({ id: "set", actions: [{ kind: "set-flag", flagIndex: 0, flagValue: true }] })], QUIET_LINE);
+      const fired = log.events.filter((event) => event.type === "rule-fired" && event.actor === "set");
+      expect(fired).toHaveLength(1); // Every tick after the first re-sets the SAME value — a no-op.
+      expect(fired[0]!.tick).toBe(0);
+    });
   });
 });

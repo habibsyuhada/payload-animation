@@ -46,9 +46,24 @@ import {
   DEFAULT_TICKS_PARAM_V2,
   MIN_EVERY_N_TICKS_V2,
   FLAG_COUNT_V2,
+  getSprintConfigV2,
+  getTargetStrikeDamagePerTickV2,
+  getEmpBurstConfigV2,
+  EMP_BURST_COOLDOWN_TICKS_V2,
+  getOverclockConfigV2,
+  OVERCLOCK_ICE_ACCURACY_BONUS_PERMILLE_V2,
+  OVERCLOCK_DURATION_TICKS_V2,
+  OVERCLOCK_COOLDOWN_TICKS_V2,
+  getSpoofSignatureDurationTicksV2,
+  SPOOF_SIGNATURE_COOLDOWN_TICKS_V2,
+  getPurgeDurationTicksV2,
+  getSiphonLifestealPermilleV2,
+  getSupportNodeMaxHpV2,
+  isDestructibleSupportNodeType,
+  type DestructibleSupportNodeType,
 } from "./ruleset-v2.js";
 import { sheetCanSplit, walkSheet } from "./sheet.js";
-import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, SheetAction, SheetCondition, SheetEvent } from "./types.js";
+import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, DefenseNodeType, SheetAction, SheetCondition, SheetEvent } from "./types.js";
 
 /**
  * Ruleset v2 engine — the virus as a nested event sheet (docs/ADR/0006).
@@ -115,7 +130,15 @@ import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, Defe
  * entities (0 if none) rather than a sum, so it stays in computeScore's expected 0..1000 range.
  */
 
-type MovementActionKind = "move-toward-core" | "move-avoiding-hazards" | "move-random" | "move-back" | "hold-position";
+type MovementActionKind = "move-toward-core" | "move-avoiding-hazards" | "move-random" | "move-back" | "hold-position" | "move-toward-node-type" | "recall";
+
+/** What a movement row actually decided (PLAN.md 8.4) — a bare kind stopped being enough once
+ * `move-toward-node-type` needed to carry its own parameter alongside it. */
+interface MovementIntent {
+  readonly kind: MovementActionKind;
+  /** "move-toward-node-type" only. */
+  readonly targetNodeTypes?: readonly DefenseNodeType[];
+}
 
 interface SlotWrite<T> {
   /** The rule that won the slot — the first writer this tick (ADR 0006 §3). */
@@ -136,7 +159,7 @@ interface OverloadContribution {
 
 /** One tick's worth of decided-but-not-yet-applied intent, for one entity. */
 interface TickPlan {
-  movement: SlotWrite<MovementActionKind> | null;
+  movement: SlotWrite<MovementIntent> | null;
   cloak: SlotWrite<BlockTier> | null;
   slowCrawl: SlotWrite<BlockTier> | null;
   decoy: SlotWrite<BlockTier> | null;
@@ -146,15 +169,52 @@ interface TickPlan {
   detonate: SlotWrite<BlockTier> | null;
   /** Written by `set-checkpoint`; resolved in utility (phase 5, PLAN.md 8.3d), alongside Self Repair. */
   checkpoint: SlotWrite<BlockTier> | null;
+  /** Written by `sprint` (PLAN.md 8.4); resolved in statuses (phase 3), stateless like Slow Crawl. */
+  sprint: SlotWrite<BlockTier> | null;
+  /** Written by `spoof-signature` (PLAN.md 8.4); resolved in statuses (phase 3), mirrors Cloak. */
+  spoofSignature: SlotWrite<BlockTier> | null;
+  /** Written by `overclock` (PLAN.md 8.4); resolved in statuses (phase 3), mirrors Cloak. */
+  overclock: SlotWrite<BlockTier> | null;
+  /** Written by `emp-burst` (PLAN.md 8.4); resolved in node effects (phase 4a). */
+  empBurst: SlotWrite<BlockTier> | null;
   readonly bruteForce: Contribution[];
   readonly exploit: Contribution[];
   readonly overload: OverloadContribution[];
   readonly selfRepair: Contribution[];
+  /** `target-strike` (PLAN.md 8.4) — cumulative, resolved against the nearest live support node in node effects (phase 4a). */
+  readonly targetStrike: Contribution[];
+  /** `purge` (PLAN.md 8.4) — cumulative, resolved in statuses (phase 3). */
+  readonly purge: Contribution[];
+  /** `siphon` (PLAN.md 8.4) — cumulative, resolved in utility (phase 5) against this tick's own attack damage. */
+  readonly siphon: Contribution[];
+  /** `set-flag` (PLAN.md 8.4) — cumulative, resolved in utility (phase 5). */
+  readonly setFlag: { ruleId: string; flagIndex: number; flagValue: boolean }[];
   actionsRun: number;
 }
 
 function emptyPlan(): TickPlan {
-  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, detonate: null, checkpoint: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
+  return {
+    movement: null,
+    cloak: null,
+    slowCrawl: null,
+    decoy: null,
+    split: null,
+    detonate: null,
+    checkpoint: null,
+    sprint: null,
+    spoofSignature: null,
+    overclock: null,
+    empBurst: null,
+    bruteForce: [],
+    exploit: [],
+    overload: [],
+    selfRepair: [],
+    targetStrike: [],
+    purge: [],
+    siphon: [],
+    setFlag: [],
+    actionsRun: 0,
+  };
 }
 
 interface DecoyState {
@@ -188,7 +248,7 @@ interface VirusEntity {
   freshArrival: boolean;
   /** ADR 0006 open question 1, resolved: an intent written mid-transit is kept (last one wins) and
    * applied on arrival only if the sheet writes nothing on the arrival tick itself. */
-  queuedMovement: MovementActionKind | null;
+  queuedMovement: MovementIntent | null;
   readonly triedEdgesFromNode: Map<number, Set<number>>;
   scannedUntilTick: number | null;
   scannedAccuracyBonusPermille: number;
@@ -213,6 +273,20 @@ interface VirusEntity {
    * departure, not arrival, so the dwell a node was first reached on never reads as "visited
    * before" — only a genuine, later return does). Copied to a split clone like `firedOnceKeys`. */
   readonly visitedNodeIds: Set<number>;
+  /** `spoof-signature` (PLAN.md 8.4) — same ready/until/cooldown pattern as `cloakUntilTick`/`cloakReadyAtTick`. */
+  spoofUntilTick: number;
+  spoofReadyAtTick: number;
+  /** `overclock` (PLAN.md 8.4) — same ready/until/cooldown pattern as Cloak. */
+  overclockUntilTick: number;
+  overclockReadyAtTick: number;
+  /** The damage multiplier of whichever tier's Overclock is currently active — captured at
+   * activation (phase 3) so phase 4a reads the tier that was actually paid for, not whatever tier
+   * happens to be queued this tick. 1000‰ (no effect) whenever Overclock isn't active. */
+  overclockDamageMultiplierPermille: number;
+  /** `emp-burst` (PLAN.md 8.4) — flat cooldown (`EMP_BURST_COOLDOWN_TICKS_V2`), so unlike Cloak/Overclock/Spoof there's no separate duration to track. */
+  empReadyAtTick: number;
+  /** `purge` (PLAN.md 8.4) — while `tick < purgeImmuneUntilTick`, Tarpit/Slow Crawl slowing is suppressed. */
+  purgeImmuneUntilTick: number;
 }
 
 interface BattleStateV2 {
@@ -237,6 +311,14 @@ interface BattleStateV2 {
    * already active extends to the longer remaining duration rather than stacking a second on top. */
   readonly alarmTriggeredIds: Set<number>;
   alarmActiveUntilTick: number;
+  /** `target-strike` (PLAN.md 8.4) — HP for the five support-node types, lazily defaulted to
+   * `getSupportNodeMaxHpV2` on first hit exactly like `firewallHp`. None of these five ever tracked
+   * HP before this action existed (RULESET.md §5.1's long-deferred debt). */
+  readonly supportNodeHp: Map<number, number>;
+  readonly destroyedSupportNodeIds: Set<number>;
+  /** `emp-burst` (PLAN.md 8.4) — a TEMPORARY disable, distinct from `destroyedSupportNodeIds`: node
+   * id -> the tick before which the node does nothing (no ICE fire, no scan, no heal, no sensing). */
+  readonly disabledSupportNodeUntilTick: Map<number, number>;
 }
 
 function damageVirus(entity: VirusEntity, amount: number): number {
@@ -303,14 +385,23 @@ function honeypotIsVisible(honeypotTier: BlockTier, conditionTier: BlockTier, se
   return seesDisguiseFromTier !== undefined && conditionTier >= seesDisguiseFromTier;
 }
 
-/** Jammer nodes (RULESET.md §14) currently within range of a location — a pure function of graph
- * position, unlike every other status here, so it needs no BattleStateV2 bookkeeping at all. */
-function activeJammerNodes(graph: DefenseGraph, location: VirusLocation): DefenseNode[] {
-  return graph.nodes.filter((node) => node.type === "jammer" && isVirusInRange(graph, node.id, getJammerConfigV2(requireTier(node)).radiusHops, location));
+/** A destructible support node (PLAN.md 8.4: `target-strike`/`emp-burst`) that's neither destroyed
+ * nor currently EMP-disabled — the shared skip-condition every ICE/Scanner/Patch Server/Jammer/Alarm
+ * loop below checks before doing anything else. */
+function isSupportNodeUsable(state: BattleStateV2, tick: number, nodeId: number): boolean {
+  return !state.destroyedSupportNodeIds.has(nodeId) && tick >= (state.disabledSupportNodeUntilTick.get(nodeId) ?? 0);
 }
 
-function isJammed(graph: DefenseGraph, location: VirusLocation): boolean {
-  return activeJammerNodes(graph, location).length > 0;
+/** Jammer nodes (RULESET.md §14) currently within range of a location and neither destroyed nor
+ * EMP-disabled (PLAN.md 8.4). */
+function activeJammerNodes(graph: DefenseGraph, state: BattleStateV2, tick: number, location: VirusLocation): DefenseNode[] {
+  return graph.nodes.filter(
+    (node) => node.type === "jammer" && isSupportNodeUsable(state, tick, node.id) && isVirusInRange(graph, node.id, getJammerConfigV2(requireTier(node)).radiusHops, location),
+  );
+}
+
+function isJammed(graph: DefenseGraph, state: BattleStateV2, tick: number, location: VirusLocation): boolean {
+  return activeJammerNodes(graph, state, tick, location).length > 0;
 }
 
 /** Strongest (lowest ‰) Tarpit multiplier active at a node — a second Tarpit in range never
@@ -330,12 +421,12 @@ function activeTarpitMultiplierPermille(graph: DefenseGraph, nodeId: number): nu
   return strongest;
 }
 
-function sensedHazardNodeIds(condition: SheetCondition, graph: DefenseGraph, state: BattleStateV2, location: VirusLocation): number[] {
+function sensedHazardNodeIds(condition: SheetCondition, graph: DefenseGraph, state: BattleStateV2, tick: number, location: VirusLocation): number[] {
   // A Jammer in range makes every sensor condition read false (ADR 0006 §8-adjacent: this is a
   // visible, explainable blind spot, not hidden RNG — the `jammed` condition, 8.4, tells the sheet
   // why). Gating here covers BOTH callers at once: the sensor sweep (phase 1) and
   // evaluateConditionPositively's "honeypot-near"/"trap-near" case route through this function.
-  if (isJammed(graph, location)) {
+  if (isJammed(graph, state, tick, location)) {
     return [];
   }
   const tier = condition.tier ?? 1;
@@ -371,7 +462,7 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
     case "node-ahead-is": {
       // Tier III Jammer also falsifies this one (RULESET.md §14) — seeing round a corner is
       // exactly what Scan Ahead used to sell, and a strong-enough Jammer un-sells it.
-      if (activeJammerNodes(ctx.graph, location).some((node) => getJammerConfigV2(requireTier(node)).jamsNodeAhead)) {
+      if (activeJammerNodes(ctx.graph, ctx.state, ctx.tick, location).some((node) => getJammerConfigV2(requireTier(node)).jamsNodeAhead)) {
         return false;
       }
       const ahead = nodeAheadId(ctx.graph, location);
@@ -379,7 +470,7 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
     }
     case "honeypot-near":
     case "trap-near":
-      return sensedHazardNodeIds(condition, ctx.graph, ctx.state, location).length > 0;
+      return sensedHazardNodeIds(condition, ctx.graph, ctx.state, ctx.tick, location).length > 0;
     case "integrity-below":
       return ctx.entity.integrity < (condition.integrityThresholdPermille ?? DEFAULT_INTEGRITY_THRESHOLD_PERMILLE_V2);
     case "is-scanned":
@@ -394,20 +485,24 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
       return location.kind === "node";
     // --- v2-only, PLAN.md 8.4 ---
     case "ice-near": {
-      if (isJammed(ctx.graph, location)) {
+      if (isJammed(ctx.graph, ctx.state, ctx.tick, location)) {
         return false;
       }
       const radius = getConditionRadiusHops("ice-near", condition.tier ?? 1);
       return ctx.graph.nodes.some(
-        (node) => node.type === "ice-sentry" && isVirusInRange(ctx.graph, node.id, radius, location) && ctx.tick >= (ctx.state.iceNextFireTick.get(node.id) ?? 0),
+        (node) =>
+          node.type === "ice-sentry" &&
+          isSupportNodeUsable(ctx.state, ctx.tick, node.id) &&
+          isVirusInRange(ctx.graph, node.id, radius, location) &&
+          ctx.tick >= (ctx.state.iceNextFireTick.get(node.id) ?? 0),
       );
     }
     case "scanner-near": {
-      if (isJammed(ctx.graph, location)) {
+      if (isJammed(ctx.graph, ctx.state, ctx.tick, location)) {
         return false;
       }
       const radius = getConditionRadiusHops("scanner-near", condition.tier ?? 1);
-      return ctx.graph.nodes.some((node) => node.type === "scanner" && isVirusInRange(ctx.graph, node.id, radius, location));
+      return ctx.graph.nodes.some((node) => node.type === "scanner" && isSupportNodeUsable(ctx.state, ctx.tick, node.id) && isVirusInRange(ctx.graph, node.id, radius, location));
     }
     case "core-within-hops": {
       const hops = condition.hops ?? DEFAULT_CORE_WITHIN_HOPS_V2;
@@ -452,11 +547,14 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
     case "decoy-armed":
       return ctx.entity.decoy.absorbsRemaining > 0;
     case "slowed": {
+      if (ctx.tick < ctx.entity.purgeImmuneUntilTick) {
+        return false;
+      }
       const here = currentNodeId(location);
       return here !== null && activeTarpitMultiplierPermille(ctx.graph, here) < 1000;
     }
     case "jammed":
-      return isJammed(ctx.graph, location);
+      return isJammed(ctx.graph, ctx.state, ctx.tick, location);
     case "alarm-active":
       return ctx.tick < ctx.state.alarmActiveUntilTick;
     case "tick-after":
@@ -503,7 +601,8 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
   const kind: ActionKind = action.kind;
   const spec = getActionSpec(kind);
   if (spec.slot === "movement") {
-    plan.movement = writeSlot(plan.movement, ruleId, kind as MovementActionKind);
+    const intent: MovementIntent = { kind: kind as MovementActionKind, ...(action.targetNodeTypes !== undefined ? { targetNodeTypes: action.targetNodeTypes } : {}) };
+    plan.movement = writeSlot(plan.movement, ruleId, intent);
     return;
   }
   if (spec.slot === "cloak") {
@@ -530,6 +629,22 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
     plan.checkpoint = writeSlot(plan.checkpoint, ruleId, tier);
     return;
   }
+  if (spec.slot === "sprint") {
+    plan.sprint = writeSlot(plan.sprint, ruleId, tier);
+    return;
+  }
+  if (spec.slot === "spoof") {
+    plan.spoofSignature = writeSlot(plan.spoofSignature, ruleId, tier);
+    return;
+  }
+  if (spec.slot === "overclock") {
+    plan.overclock = writeSlot(plan.overclock, ruleId, tier);
+    return;
+  }
+  if (spec.slot === "emp") {
+    plan.empBurst = writeSlot(plan.empBurst, ruleId, tier);
+    return;
+  }
   if (kind === "brute-force") {
     plan.bruteForce.push({ ruleId, amount: getBruteForceDamagePerTickV2(tier) });
   } else if (kind === "exploit") {
@@ -539,6 +654,14 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
     plan.overload.push({ ruleId, splashDamage: config.splashDamage, radiusHops: config.radiusHops });
   } else if (kind === "self-repair") {
     plan.selfRepair.push({ ruleId, amount: getSelfRepairHealPerTickV2(tier) });
+  } else if (kind === "target-strike") {
+    plan.targetStrike.push({ ruleId, amount: getTargetStrikeDamagePerTickV2(tier) });
+  } else if (kind === "purge") {
+    plan.purge.push({ ruleId, amount: getPurgeDurationTicksV2(tier) });
+  } else if (kind === "siphon") {
+    plan.siphon.push({ ruleId, amount: getSiphonLifestealPermilleV2(tier) });
+  } else if (kind === "set-flag") {
+    plan.setFlag.push({ ruleId, flagIndex: action.flagIndex ?? DEFAULT_FLAG_INDEX_V2, flagValue: action.flagValue ?? true });
   }
 }
 
@@ -573,9 +696,62 @@ function evaluateSheet(events: readonly SheetEvent[], ctx: ConditionContextV2, p
 
 /* --- Movement ---------------------------------------------------------------------------- */
 
-function resolveMovementTarget(kind: MovementActionKind, fromNodeId: number, graph: DefenseGraph, entity: VirusEntity, rng: Rng, knownHazardNodeIds: ReadonlySet<number>): number | null {
+/** Whether a node is still a legitimate target for `move-toward-node-type`/`target-strike` —
+ * "alive" for a Breach node means not destroyed/not-drained-to-0, for a destructible support node
+ * means not yet destroyed (PLAN.md 8.4); every other node type has nothing that can destroy it. */
+function isNodeTargetableAlive(node: DefenseNode, state: BattleStateV2): boolean {
+  if (node.type === "firewall") {
+    return !state.destroyedFirewallIds.has(node.id);
+  }
+  if (node.type === "core") {
+    return state.coreHp > 0;
+  }
+  if (isDestructibleSupportNodeType(node.type)) {
+    return !state.destroyedSupportNodeIds.has(node.id);
+  }
+  return true;
+}
+
+function resolveMovementTarget(
+  intent: MovementIntent,
+  fromNodeId: number,
+  graph: DefenseGraph,
+  state: BattleStateV2,
+  entity: VirusEntity,
+  rng: Rng,
+  knownHazardNodeIds: ReadonlySet<number>,
+): number | null {
+  const kind = intent.kind;
   if (kind === "hold-position") {
     return null;
+  }
+  if (kind === "move-toward-node-type") {
+    // First-found-wins tie-break on shortest-path length, via `graph.nodes`' own iteration order
+    // (PLAN.md 8.4) — deterministic without needing a secondary sort key.
+    const targets = intent.targetNodeTypes ?? DEFAULT_CONDITION_TARGET_NODE_TYPES_V2;
+    let bestPath: readonly number[] | null = null;
+    for (const node of graph.nodes) {
+      if (!targets.includes(node.type) || !isNodeTargetableAlive(node, state)) {
+        continue;
+      }
+      const path = shortestPath(graph, fromNodeId, node.id);
+      if (path && (bestPath === null || path.length < bestPath.length)) {
+        bestPath = path;
+      }
+    }
+    if (bestPath && bestPath.length >= 2) {
+      return bestPath[1]!;
+    }
+    // No living node of the requested type reachable — fall back to Core, same as Move Toward Core.
+    const fallback = shortestPath(graph, fromNodeId, graph.coreNodeId);
+    return fallback && fallback.length >= 2 ? fallback[1]! : null;
+  }
+  if (kind === "recall") {
+    if (entity.checkpointNodeId === null) {
+      return null;
+    }
+    const path = shortestPath(graph, fromNodeId, entity.checkpointNodeId);
+    return path && path.length >= 2 ? path[1]! : null;
   }
   if (kind === "move-back") {
     const previous = entity.previousNodeId;
@@ -632,6 +808,12 @@ interface EntityTickWork {
   slowCrawl: ReturnType<typeof getSlowCrawlConfigV2> | null;
   bruteForceDamage: number;
   exploitDamage: number;
+  /** `sprint` (PLAN.md 8.4) — stateless per tick, mirrors `slowCrawl`. */
+  sprint: ReturnType<typeof getSprintConfigV2> | null;
+  /** `spoof-signature` (PLAN.md 8.4) — immune to new Scanner "scanned" status while true. */
+  spoofActive: boolean;
+  /** `overclock` (PLAN.md 8.4) — this tick's attack damage multiplier and ICE-accuracy cost apply while true. */
+  overclockActive: boolean;
 }
 
 export function simulateV2(input: BattleInputV2): BattleLog {
@@ -678,6 +860,13 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     respawnsUsed: 0,
     flags: new Array(FLAG_COUNT_V2).fill(false),
     visitedNodeIds: new Set(),
+    spoofUntilTick: 0,
+    spoofReadyAtTick: 0,
+    overclockUntilTick: 0,
+    overclockReadyAtTick: 0,
+    overclockDamageMultiplierPermille: 1000,
+    empReadyAtTick: 0,
+    purgeImmuneUntilTick: 0,
   };
   /** Append-only, ascending, never reused (PLAN.md 8.3a: entities are never spliced). */
   let nextEntityId = 1;
@@ -694,6 +883,9 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     turnstileLockouts: new Map(),
     alarmTriggeredIds: new Set(),
     alarmActiveUntilTick: 0,
+    supportNodeHp: new Map(),
+    destroyedSupportNodeIds: new Set(),
+    disabledSupportNodeUntilTick: new Map(),
   };
 
   events.push({ tick: 0, type: "virus-entered-node", actor: "virus", target: String(graph.entryNodeIds[entryIndex]!), ...(canSplit ? { entityId: firstEntity.id } : {}) });
@@ -770,14 +962,26 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       entity.damageTakenThisTick = 0;
       const knownHazardNodeIds = new Set<number>();
       for (const condition of sensorConditions) {
-        for (const nodeId of sensedHazardNodeIds(condition, graph, state, entity.location)) {
+        for (const nodeId of sensedHazardNodeIds(condition, graph, state, tick, entity.location)) {
           knownHazardNodeIds.add(nodeId);
         }
       }
       const plan = emptyPlan();
       const ctx: ConditionContextV2 = { graph, state, entity, tick };
       evaluateSheet(input.virus.events, ctx, plan);
-      work.push({ entity, plan, knownHazardNodeIds, firedRuleIds: new Set(), cloakActive: false, slowCrawl: null, bruteForceDamage: 0, exploitDamage: 0 });
+      work.push({
+        entity,
+        plan,
+        knownHazardNodeIds,
+        firedRuleIds: new Set(),
+        cloakActive: false,
+        slowCrawl: null,
+        bruteForceDamage: 0,
+        exploitDamage: 0,
+        sprint: null,
+        spoofActive: false,
+        overclockActive: false,
+      });
     }
 
     // --- 3. Statuses, per entity ---
@@ -795,6 +999,57 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       w.slowCrawl = plan.slowCrawl ? getSlowCrawlConfigV2(plan.slowCrawl.value) : null;
       if (plan.slowCrawl && w.slowCrawl) {
         w.firedRuleIds.add(plan.slowCrawl.ruleId);
+      }
+
+      // Spoof Signature (PLAN.md 8.4) — same ready/until/cooldown pattern as Cloak, and also wipes
+      // any scan already in progress, since the whole point is erasing a scan, not just refusing new ones.
+      if (plan.spoofSignature && tick >= entity.spoofReadyAtTick && tick >= entity.spoofUntilTick) {
+        const duration = getSpoofSignatureDurationTicksV2(plan.spoofSignature.value);
+        entity.spoofUntilTick = tick + duration;
+        entity.spoofReadyAtTick = entity.spoofUntilTick + SPOOF_SIGNATURE_COOLDOWN_TICKS_V2;
+        entity.scannedUntilTick = null;
+        w.firedRuleIds.add(plan.spoofSignature.ruleId);
+        events.push({ tick, type: "status-applied", actor: "spoof-signature", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+      }
+      w.spoofActive = tick < entity.spoofUntilTick;
+
+      // Overclock (PLAN.md 8.4) — same ready/until/cooldown pattern as Cloak. The multiplier is
+      // captured on the entity now, at activation, so phase 4a/4c read the tier actually paid for
+      // even on a later tick when `plan.overclock` itself is empty.
+      if (plan.overclock && tick >= entity.overclockReadyAtTick && tick >= entity.overclockUntilTick) {
+        const config = getOverclockConfigV2(plan.overclock.value);
+        entity.overclockUntilTick = tick + OVERCLOCK_DURATION_TICKS_V2;
+        entity.overclockReadyAtTick = entity.overclockUntilTick + OVERCLOCK_COOLDOWN_TICKS_V2;
+        entity.overclockDamageMultiplierPermille = config.damageMultiplierPermille;
+        w.firedRuleIds.add(plan.overclock.ruleId);
+        events.push({ tick, type: "status-applied", actor: "overclock", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+      }
+      w.overclockActive = tick < entity.overclockUntilTick;
+
+      // Purge (PLAN.md 8.4) — cumulative, credited only when it actually EXTENDS the immunity
+      // window already in place (the "silent no-op" convention, module docstring).
+      const purgeTicks = plan.purge.reduce((max, contribution) => Math.max(max, contribution.amount), 0);
+      if (purgeTicks > 0) {
+        const candidateUntil = tick + purgeTicks;
+        if (candidateUntil > entity.purgeImmuneUntilTick) {
+          entity.purgeImmuneUntilTick = candidateUntil;
+          for (const contribution of plan.purge) {
+            w.firedRuleIds.add(contribution.ruleId);
+          }
+          events.push({ tick, type: "status-applied", actor: "purge", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+        }
+      }
+
+      // Sprint (PLAN.md 8.4) — stateless per tick like Slow Crawl (no cooldown), but pays its
+      // Integrity cost immediately here rather than only if the body actually moves: the effort was
+      // spent the instant the rule fired, whether or not phase 6 finds anywhere to go.
+      w.sprint = plan.sprint ? getSprintConfigV2(plan.sprint.value) : null;
+      if (plan.sprint && w.sprint) {
+        const dealt = damageVirus(entity, w.sprint.integrityCostPerTick);
+        w.firedRuleIds.add(plan.sprint.ruleId);
+        if (dealt > 0) {
+          events.push({ tick, type: "virus-damaged", actor: "sprint", target: "virus", delta: -dealt, ...(canSplit ? { entityId: entity.id } : {}) });
+        }
       }
     }
 
@@ -814,7 +1069,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
 
     const triggerAlarmsNear = (destroyedNodeId: number): void => {
       for (const alarmNode of alarmNodes) {
-        if (state.alarmTriggeredIds.has(alarmNode.id)) {
+        if (state.alarmTriggeredIds.has(alarmNode.id) || !isSupportNodeUsable(state, tick, alarmNode.id)) {
           continue;
         }
         const config = getAlarmConfigV2(requireTier(alarmNode));
@@ -866,10 +1121,60 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         continue;
       }
 
-      w.bruteForceDamage = plan.bruteForce.reduce((sum, contribution) => sum + contribution.amount, 0);
-      w.exploitDamage = entity.freshArrival ? plan.exploit.reduce((sum, contribution) => sum + contribution.amount, 0) : 0;
+      // EMP Burst (PLAN.md 8.4): a slot action like Detonate/Checkpoint, but non-terminal — resolved
+      // here, ahead of this body's own attack, so a burst that disables a support node this same
+      // tick already keeps that node from acting later in this same tick's remaining node-effect
+      // sub-phases (4c/4e/4f). Cooldown is a flat per-entity ready-tick, mirroring Cloak's shape but
+      // with no separate "active" window of its own to track.
+      if (plan.empBurst && tick >= entity.empReadyAtTick) {
+        const config = getEmpBurstConfigV2(plan.empBurst.value);
+        entity.empReadyAtTick = tick + EMP_BURST_COOLDOWN_TICKS_V2;
+        let disabledAny = false;
+        for (const node of graph.nodes) {
+          if (!isDestructibleSupportNodeType(node.type) || state.destroyedSupportNodeIds.has(node.id) || !isVirusInRange(graph, node.id, config.radiusHops, entity.location)) {
+            continue;
+          }
+          state.disabledSupportNodeUntilTick.set(node.id, Math.max(state.disabledSupportNodeUntilTick.get(node.id) ?? 0, tick + config.disableDurationTicks));
+          disabledAny = true;
+        }
+        if (disabledAny) {
+          w.firedRuleIds.add(plan.empBurst.ruleId);
+          events.push({ tick, type: "status-applied", actor: "emp-burst", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+        }
+      }
+
+      // Overclock (PLAN.md 8.4): "semua damage serang" — brute-force, exploit, overload splash, and
+      // target-strike all scale by whichever tier is currently active on this body.
+      const overclockMultiplier = w.overclockActive ? entity.overclockDamageMultiplierPermille : 1000;
+      w.bruteForceDamage = applyPermille(plan.bruteForce.reduce((sum, contribution) => sum + contribution.amount, 0), overclockMultiplier);
+      w.exploitDamage = entity.freshArrival ? applyPermille(plan.exploit.reduce((sum, contribution) => sum + contribution.amount, 0), overclockMultiplier) : 0;
       const bruteForceDamage = w.bruteForceDamage;
       const exploitDamage = w.exploitDamage;
+
+      // Target Strike (PLAN.md 8.4): cumulative, resolved against the single nearest live support
+      // node within 1 hop (lowest node id breaks a tie), finally implementing the destructibility
+      // RULESET.md §5.1 deferred for these five node types since v1.
+      const targetStrikeDamage = applyPermille(plan.targetStrike.reduce((sum, contribution) => sum + contribution.amount, 0), overclockMultiplier);
+      if (targetStrikeDamage > 0) {
+        const target = graph.nodes
+          .filter((node) => isDestructibleSupportNodeType(node.type) && isSupportNodeUsable(state, tick, node.id) && isVirusInRange(graph, node.id, 1, entity.location))
+          .sort((a, b) => a.id - b.id)[0];
+        if (target) {
+          const supportType = target.type as DestructibleSupportNodeType;
+          const maxHp = getSupportNodeMaxHpV2(supportType, requireTier(target));
+          const currentHp = state.supportNodeHp.get(target.id) ?? maxHp;
+          const newHp = Math.max(0, currentHp - targetStrikeDamage);
+          state.supportNodeHp.set(target.id, newHp);
+          events.push({ tick, type: "node-damaged", actor: "virus", target: String(target.id), delta: -(currentHp - newHp), ...(canSplit ? { entityId: entity.id } : {}) });
+          for (const contribution of plan.targetStrike) {
+            w.firedRuleIds.add(contribution.ruleId);
+          }
+          if (newHp <= 0) {
+            state.destroyedSupportNodeIds.add(target.id);
+            events.push({ tick, type: "node-destroyed", actor: "virus", target: String(target.id), ...(canSplit ? { entityId: entity.id } : {}) });
+          }
+        }
+      }
 
       const creditAttack = (dealt: number): void => {
         if (dealt <= 0) {
@@ -887,6 +1192,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
 
       const applyOverloadSplash = (destroyedNodeId: number): void => {
         for (const contribution of plan.overload) {
+          const splashDamage = applyPermille(contribution.splashDamage, overclockMultiplier);
           for (const node of graph.nodes) {
             if (node.id === destroyedNodeId || (node.type !== "firewall" && node.type !== "core")) {
               continue;
@@ -897,7 +1203,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
             }
             if (node.type === "firewall" && !state.destroyedFirewallIds.has(node.id)) {
               const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHpV2(requireTier(node));
-              const newHp = Math.max(0, currentHp - contribution.splashDamage);
+              const newHp = Math.max(0, currentHp - splashDamage);
               state.firewallHp.set(node.id, newHp);
               events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp), ...(canSplit ? { entityId: entity.id } : {}) });
               w.firedRuleIds.add(contribution.ruleId);
@@ -908,7 +1214,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
                 triggerAlarmsNear(node.id);
               }
             } else if (node.type === "core" && state.coreHp > 0) {
-              const newHp = Math.max(0, state.coreHp - contribution.splashDamage);
+              const newHp = Math.max(0, state.coreHp - splashDamage);
               const drained = state.coreHp - newHp;
               state.coreHp = newHp;
               if (drained > 0) {
@@ -959,7 +1265,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     // tick's shots. A destroy-triggered alarm (triggerAlarmsNear above) already ran earlier in this
     // same phase, so both trigger paths take effect the tick they fire, not the next. ---
     for (const alarmNode of alarmNodes) {
-      if (state.alarmTriggeredIds.has(alarmNode.id)) {
+      if (state.alarmTriggeredIds.has(alarmNode.id) || !isSupportNodeUsable(state, tick, alarmNode.id)) {
         continue;
       }
       const config = getAlarmConfigV2(requireTier(alarmNode));
@@ -982,7 +1288,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     // the single-entity 8.2b behavior this replaces. ---
     const entitiesHitByIceThisTick = new Set<number>();
     for (const iceNode of iceSentryNodes) {
-      if (tick < (state.iceNextFireTick.get(iceNode.id) ?? 0)) {
+      if (tick < (state.iceNextFireTick.get(iceNode.id) ?? 0) || !isSupportNodeUsable(state, tick, iceNode.id)) {
         continue;
       }
       const config = getIceSentryConfigV2(requireTier(iceNode));
@@ -1002,7 +1308,9 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       }
       const target = targetWork.entity;
       const scannedActive = target.scannedUntilTick !== null && tick < target.scannedUntilTick;
-      const baseAccuracy = config.accuracyPermille + (alarmActive ? ALARM_ICE_ACCURACY_BONUS_PERMILLE : 0);
+      // Overclock (PLAN.md 8.4) trades attack power for exposure: while active, ICE is +150‰ more
+      // accurate against the body running it — the same additive bucket as the Alarm Relay bonus.
+      const baseAccuracy = config.accuracyPermille + (alarmActive ? ALARM_ICE_ACCURACY_BONUS_PERMILLE : 0) + (targetWork.overclockActive ? OVERCLOCK_ICE_ACCURACY_BONUS_PERMILLE_V2 : 0);
       const accuracy = effectiveAccuracyPermilleV2(baseAccuracy, scannedActive ? target.scannedAccuracyBonusPermille : 0, targetWork.slowCrawl?.iceAccuracyReductionPermille ?? 0);
       const hit = rollIceSentryHitV2(rng, accuracy);
       const fireInterval = alarmActive ? Math.max(1, config.fireIntervalTicks - ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS) : config.fireIntervalTicks;
@@ -1054,9 +1362,13 @@ export function simulateV2(input: BattleInputV2): BattleLog {
 
     // --- 4e. Scanner aura — sentries outer (ascending id), entities inner (ascending id) ---
     for (const scannerNode of scannerNodes) {
+      if (!isSupportNodeUsable(state, tick, scannerNode.id)) {
+        continue;
+      }
       const config = getScannerConfigV2(requireTier(scannerNode));
       for (const w of work) {
-        if (w.cloakActive) {
+        // Spoof Signature (PLAN.md 8.4) makes a body immune to new scans, same as Cloak already did.
+        if (w.cloakActive || w.spoofActive) {
           continue;
         }
         const entity = w.entity;
@@ -1077,6 +1389,9 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     // any of it gets healed back. Cumulative across multiple servers in range (unlike Tarpit/Alarm,
     // nothing in the table says Patch Server doesn't stack). ---
     for (const patchServerNode of patchServerNodes) {
+      if (!isSupportNodeUsable(state, tick, patchServerNode.id)) {
+        continue;
+      }
       const config = getPatchServerConfigV2(requireTier(patchServerNode));
       for (const node of graph.nodes) {
         if (node.id === patchServerNode.id) {
@@ -1137,11 +1452,40 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         w.firedRuleIds.add(plan.checkpoint.ruleId);
         events.push({ tick, type: "status-applied", actor: "set-checkpoint", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
       }
+
+      // Siphon (PLAN.md 8.4): heals off this body's OWN attack output this tick — the same
+      // brute-force/exploit total phase 4a already computed (overclock-multiplied, if active) —
+      // credited only if it actually raised Integrity, the same "silent no-op" convention as Self
+      // Repair above.
+      const siphonPermille = plan.siphon.reduce((max, contribution) => Math.max(max, contribution.amount), 0);
+      if (siphonPermille > 0 && !entity.died) {
+        const siphonHeal = applyPermille(w.bruteForceDamage + w.exploitDamage, siphonPermille);
+        if (siphonHeal > 0) {
+          const before = entity.integrity;
+          entity.integrity = Math.min(VIRUS_START_INTEGRITY, entity.integrity + siphonHeal);
+          if (entity.integrity > before) {
+            events.push({ tick, type: "virus-repaired", actor: "siphon", target: "virus", delta: entity.integrity - before, ...(canSplit ? { entityId: entity.id } : {}) });
+            for (const contribution of plan.siphon) {
+              w.firedRuleIds.add(contribution.ruleId);
+            }
+          }
+        }
+      }
+
+      // Set Flag (PLAN.md 8.4, RULESET.md §12) — cumulative, and the sheet's first genuine memory:
+      // only credited when it actually CHANGES the flag, the same "silent no-op" convention as
+      // everything else above.
+      for (const write of plan.setFlag) {
+        if (entity.flags[write.flagIndex] !== write.flagValue) {
+          entity.flags[write.flagIndex] = write.flagValue;
+          w.firedRuleIds.add(write.ruleId);
+        }
+      }
     }
 
     // --- 6. Movement, per entity (ascending id) ---
     for (const w of work) {
-      const { entity, plan, knownHazardNodeIds, slowCrawl } = w;
+      const { entity, plan, knownHazardNodeIds, slowCrawl, sprint } = w;
       entity.freshArrival = false;
       if (entity.location.kind === "edge") {
         if (plan.movement) {
@@ -1160,10 +1504,10 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         }
       } else {
         const fromNodeId: number = entity.location.nodeId;
-        const intentKind = plan.movement?.value ?? entity.queuedMovement;
+        const intent = plan.movement?.value ?? entity.queuedMovement;
         entity.queuedMovement = null;
-        if (intentKind !== null && intentKind !== undefined && !isBlockingNodeV2(fromNodeId, graph, state, entity)) {
-          const rawTarget = resolveMovementTarget(intentKind, fromNodeId, graph, entity, rng, knownHazardNodeIds);
+        if (intent !== null && intent !== undefined && !isBlockingNodeV2(fromNodeId, graph, state, entity)) {
+          const rawTarget = resolveMovementTarget(intent, fromNodeId, graph, state, entity, rng, knownHazardNodeIds);
           // Turnstile (RULESET.md §14): a node departed recently forbids re-entry — this is a
           // post-filter rather than an `avoid` set threaded into every movement kind, so it blocks
           // move-back/move-random/pathfinding equally instead of only the one action that names it.
@@ -1174,11 +1518,17 @@ export function simulateV2(input: BattleInputV2): BattleLog {
             w.firedRuleIds.add(plan.movement.ruleId);
           }
           if (target !== null) {
-            const baseSpeed = getActionSpec(intentKind).speedDuPerTick ?? 50;
-            const tarpitMultiplier = activeTarpitMultiplierPermille(graph, fromNodeId);
+            const baseSpeed = getActionSpec(intent.kind).speedDuPerTick ?? 50;
+            // Purge (PLAN.md 8.4) suppresses BOTH sources of "slowed" it names — Tarpit and Slow
+            // Crawl — for its window, the same status the `slowed` condition already reads.
+            const purged = tick < entity.purgeImmuneUntilTick;
+            const tarpitMultiplier = purged ? 1000 : activeTarpitMultiplierPermille(graph, fromNodeId);
             let speed = tarpitMultiplier < 1000 ? Math.max(1, applyPermille(baseSpeed, tarpitMultiplier)) : baseSpeed;
-            if (slowCrawl) {
+            if (slowCrawl && !purged) {
               speed = Math.max(1, applyPermille(speed, slowCrawl.speedMultiplierPermille));
+            }
+            if (sprint) {
+              speed = Math.max(1, applyPermille(speed, sprint.speedMultiplierPermille));
             }
             events.push({ tick, type: "virus-departed-node", actor: "virus", target: String(fromNodeId), ...(canSplit ? { entityId: entity.id } : {}) });
             if (findNode(graph, fromNodeId).type === "turnstile") {
@@ -1244,6 +1594,16 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         respawnsUsed: 0,
         flags: [...entity.flags],
         visitedNodeIds: new Set(entity.visitedNodeIds),
+        // Spoof/Overclock/Purge windows and the EMP cooldown are all PHYSICAL status (same bucket as
+        // cloak/scan/checkpoint above) — a fresh body hasn't earned any of them itself, even if the
+        // parent had one active when it split.
+        spoofUntilTick: 0,
+        spoofReadyAtTick: 0,
+        overclockUntilTick: 0,
+        overclockReadyAtTick: 0,
+        overclockDamageMultiplierPermille: 1000,
+        empReadyAtTick: 0,
+        purgeImmuneUntilTick: 0,
       };
       state.entities.push(clone);
       w.firedRuleIds.add(plan.split.ruleId);

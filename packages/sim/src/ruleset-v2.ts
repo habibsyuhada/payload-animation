@@ -124,7 +124,7 @@ export const FLAG_COUNT_V2 = 4;
  * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
  * at the bottom must not overwrite the reaction above it.
  */
-export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate" | "checkpoint";
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate" | "checkpoint" | "sprint" | "spoof" | "overclock" | "emp";
 
 export interface ActionSpec {
   readonly kind: ActionKind;
@@ -164,6 +164,19 @@ export const ACTION_SPECS_V2: readonly ActionSpec[] = [
   // which node "wins", same first-writer-wins rule as everything else (ADR 0006 §3); re-setting on
   // a LATER tick simply overwrites the previous checkpoint, no `once` needed.
   { kind: "set-checkpoint", category: "utility", weightKbByTier: { 1: 600, 2: 750, 3: 900 }, slot: "checkpoint" },
+  // v2-only, PLAN.md 8.4 (RULESET.md §10.2 B.2).
+  { kind: "move-toward-node-type", category: "movement", weightKb: 700, slot: "movement", speedDuPerTick: 50 },
+  // Doesn't itself write the movement slot — like Slow Crawl, it modifies whatever movement action
+  // wins it, so it's categorized by that (a status effect) rather than by its "Gerak" table section.
+  { kind: "sprint", category: "utility", weightKbByTier: { 1: 450, 2: 560, 3: 670 }, slot: "sprint" },
+  { kind: "recall", category: "movement", weightKb: 350, slot: "movement", speedDuPerTick: 50 },
+  { kind: "target-strike", category: "attack", weightKbByTier: { 1: 750, 2: 950, 3: 1150 } },
+  { kind: "emp-burst", category: "attack", weightKbByTier: { 1: 800, 2: 1000, 3: 1200 }, slot: "emp" },
+  { kind: "overclock", category: "attack", weightKbByTier: { 1: 650, 2: 800, 3: 950 }, slot: "overclock" },
+  { kind: "spoof-signature", category: "stealth", weightKbByTier: { 1: 550, 2: 700, 3: 850 }, slot: "spoof" },
+  { kind: "purge", category: "stealth", weightKbByTier: { 1: 400, 2: 500, 3: 600 } },
+  { kind: "siphon", category: "stealth", weightKbByTier: { 1: 500, 2: 620, 3: 740 } },
+  { kind: "set-flag", category: "utility", weightKb: 60 },
 ];
 
 export function getConditionSpec(kind: ConditionKind): ConditionSpec {
@@ -336,6 +349,111 @@ const CHECKPOINT_CONFIG_V2: Readonly<Record<BlockTier, CheckpointConfigV2>> = {
 
 export function getCheckpointConfigV2(tier: BlockTier): CheckpointConfigV2 {
   return CHECKPOINT_CONFIG_V2[tier];
+}
+
+interface SprintConfigV2 {
+  readonly speedMultiplierPermille: number;
+  readonly integrityCostPerTick: number;
+}
+
+const SPRINT_CONFIG_V2: Readonly<Record<BlockTier, SprintConfigV2>> = {
+  1: { speedMultiplierPermille: 1300, integrityCostPerTick: 6 },
+  2: { speedMultiplierPermille: 1450, integrityCostPerTick: 9 },
+  3: { speedMultiplierPermille: 1600, integrityCostPerTick: 12 },
+};
+
+export function getSprintConfigV2(tier: BlockTier): SprintConfigV2 {
+  return SPRINT_CONFIG_V2[tier];
+}
+
+const TARGET_STRIKE_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 90, 2: 130, 3: 180 };
+
+export function getTargetStrikeDamagePerTickV2(tier: BlockTier): number {
+  return TARGET_STRIKE_DAMAGE_V2[tier];
+}
+
+interface EmpBurstConfigV2 {
+  readonly radiusHops: number;
+  readonly disableDurationTicks: number;
+}
+
+const EMP_BURST_CONFIG_V2: Readonly<Record<BlockTier, EmpBurstConfigV2>> = {
+  1: { radiusHops: 1, disableDurationTicks: 20 },
+  2: { radiusHops: 1, disableDurationTicks: 30 },
+  3: { radiusHops: 2, disableDurationTicks: 40 },
+};
+
+export function getEmpBurstConfigV2(tier: BlockTier): EmpBurstConfigV2 {
+  return EMP_BURST_CONFIG_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2). */
+export const EMP_BURST_COOLDOWN_TICKS_V2 = 120;
+
+interface OverclockConfigV2 {
+  readonly damageMultiplierPermille: number;
+}
+
+const OVERCLOCK_CONFIG_V2: Readonly<Record<BlockTier, OverclockConfigV2>> = {
+  1: { damageMultiplierPermille: 1400 },
+  2: { damageMultiplierPermille: 1550 },
+  3: { damageMultiplierPermille: 1700 },
+};
+
+export function getOverclockConfigV2(tier: BlockTier): OverclockConfigV2 {
+  return OVERCLOCK_CONFIG_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2): the ICE-accuracy cost of running Overclock. */
+export const OVERCLOCK_ICE_ACCURACY_BONUS_PERMILLE_V2 = 150;
+export const OVERCLOCK_DURATION_TICKS_V2 = 20;
+export const OVERCLOCK_COOLDOWN_TICKS_V2 = 90;
+
+const SPOOF_SIGNATURE_DURATION_V2: Readonly<Record<BlockTier, number>> = { 1: 15, 2: 25, 3: 35 };
+
+export function getSpoofSignatureDurationTicksV2(tier: BlockTier): number {
+  return SPOOF_SIGNATURE_DURATION_V2[tier];
+}
+
+/** Flat regardless of tier (RULESET.md §10.2). */
+export const SPOOF_SIGNATURE_COOLDOWN_TICKS_V2 = 100;
+
+const PURGE_DURATION_V2: Readonly<Record<BlockTier, number>> = { 1: 10, 2: 15, 3: 20 };
+
+export function getPurgeDurationTicksV2(tier: BlockTier): number {
+  return PURGE_DURATION_V2[tier];
+}
+
+const SIPHON_LIFESTEAL_PERMILLE_V2: Readonly<Record<BlockTier, number>> = { 1: 300, 2: 400, 3: 500 };
+
+export function getSiphonLifestealPermilleV2(tier: BlockTier): number {
+  return SIPHON_LIFESTEAL_PERMILLE_V2[tier];
+}
+
+/** The five node types `target-strike` can hit (RULESET.md §10.2's own list) — Trap/Honeypot are
+ * already one-shot, Turnstile is explicitly indestructible, Router/Entry/Core are structural. */
+export type DestructibleSupportNodeType = "ice-sentry" | "scanner" | "patch-server" | "jammer" | "alarm";
+
+/**
+ * PLAN.md 8.4: `target-strike` is what finally implements the destructibility RULESET.md §5.1
+ * deferred for these five since v1 — none of them tracked HP before this. ICE Sentry/Scanner never
+ * needed one in v1 either; these are new numbers (softer than a Firewall, reflecting how exposed a
+ * support node is compared to something built to be breached), not migrated from anywhere.
+ */
+const SUPPORT_NODE_HP_V2: Readonly<Record<DestructibleSupportNodeType, Readonly<Record<BlockTier, number>>>> = {
+  "ice-sentry": { 1: 150, 2: 220, 3: 300 },
+  scanner: { 1: 120, 2: 180, 3: 250 },
+  "patch-server": { 1: 200, 2: 300, 3: 400 },
+  jammer: { 1: 180, 2: 260, 3: 340 },
+  alarm: { 1: 200, 2: 300, 3: 400 },
+};
+
+export function getSupportNodeMaxHpV2(type: DestructibleSupportNodeType, tier: BlockTier): number {
+  return SUPPORT_NODE_HP_V2[type][tier];
+}
+
+export function isDestructibleSupportNodeType(type: DefenseNodeType): type is DestructibleSupportNodeType {
+  return type === "ice-sentry" || type === "scanner" || type === "patch-server" || type === "jammer" || type === "alarm";
 }
 
 /** Default threshold for "integrity-below" when a row doesn't carry one (matches v1's tier I). */

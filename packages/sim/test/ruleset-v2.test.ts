@@ -71,6 +71,16 @@ const ALL_ACTION_KINDS: readonly ActionKind[] = [
   "worm-split",
   "detonate",
   "set-checkpoint",
+  "move-toward-node-type",
+  "sprint",
+  "recall",
+  "target-strike",
+  "emp-burst",
+  "overclock",
+  "spoof-signature",
+  "purge",
+  "siphon",
+  "set-flag",
 ];
 
 const TIERS: readonly BlockTier[] = [1, 2, 3];
@@ -99,13 +109,17 @@ describe("v2 catalog coverage", () => {
     expect(movementSlotted).toEqual(ACTION_SPECS_V2.filter((spec) => spec.category === "movement").map((spec) => spec.kind));
   });
 
-  it("gives the attack actions no slot at all — they are the cumulative ones, except the one that isn't", () => {
-    // `detonate` (PLAN.md 8.3c) is the one deliberate exception: a one-shot self-sacrifice, not
-    // something that stacks, so it takes a slot like every other non-repeatable action.
-    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack" && candidate.kind !== "detonate")) {
+  it("gives the attack actions no slot at all — they are the cumulative ones, except the ones that aren't", () => {
+    // `detonate` (8.3c), `overclock` and `emp-burst` (8.4) are the deliberate exceptions: each is a
+    // one-shot self-buff or burst rather than something that stacks, so each takes a slot like
+    // every other non-repeatable action.
+    const SLOTTED_ATTACK_EXCEPTIONS: readonly ActionKind[] = ["detonate", "overclock", "emp-burst"];
+    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack" && !SLOTTED_ATTACK_EXCEPTIONS.includes(candidate.kind))) {
       expect(spec.slot).toBeUndefined();
     }
     expect(getActionSpec("detonate").slot).toBe("detonate");
+    expect(getActionSpec("overclock").slot).toBe("overclock");
+    expect(getActionSpec("emp-burst").slot).toBe("emp");
     expect(getActionSpec("self-repair").slot).toBeUndefined();
   });
 
