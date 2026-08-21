@@ -40,6 +40,44 @@ describe("generateSheet", () => {
     const depths = [...Array(40).keys()].map((index) => sheetDepth(generateSheet(createRng(index + 1), LIMITS)));
     expect(Math.max(...depths)).toBeGreaterThan(1);
   });
+
+  /** PLAN.md 8.8: the generator has to reach every parameter PLAN.md 8.4 added (hops/ticks/
+   * flagIndex/count/targetNodeTypes), or the search's coverage is stuck at pre-8.4 content. */
+  it("eventually generates every new-in-8.4 condition/action parameter", () => {
+    function allEvents(program: ReturnType<typeof generateSheet>): { conditions: readonly unknown[]; actions: readonly unknown[] }[] {
+      function walk(events: readonly { conditions: readonly unknown[]; actions: readonly unknown[]; children: readonly unknown[] }[]): { conditions: readonly unknown[]; actions: readonly unknown[] }[] {
+        return events.flatMap((event) => [event, ...walk(event.children as typeof events)]);
+      }
+      return walk(program.events);
+    }
+
+    const seen = { hops: false, thresholdPermille: false, ticksTickAfter: false, ticksEveryN: false, flagIndexCondition: false, count: false, moveTowardNodeType: false, setFlag: false, newDefenseNodeTarget: false };
+    const newDefenseNodeTypes = new Set(["patch-server", "tarpit", "jammer", "turnstile", "alarm"]);
+
+    for (let seed = 1; seed <= 400; seed += 1) {
+      const sheet = generateSheet(createRng(seed), LIMITS);
+      for (const event of allEvents(sheet)) {
+        for (const condition of event.conditions as { kind: string; hops?: number; thresholdPermille?: number; ticks?: number; flagIndex?: number; count?: number; targetNodeTypes?: readonly string[] }[]) {
+          if (condition.kind === "core-within-hops" && condition.hops !== undefined) seen.hops = true;
+          if ((condition.kind === "core-hp-below" || condition.kind === "node-hp-below") && condition.thresholdPermille !== undefined) seen.thresholdPermille = true;
+          if (condition.kind === "tick-after" && condition.ticks !== undefined) seen.ticksTickAfter = true;
+          if (condition.kind === "every-n-ticks" && condition.ticks !== undefined) seen.ticksEveryN = true;
+          if (condition.kind === "flag-is" && condition.flagIndex !== undefined) seen.flagIndexCondition = true;
+          if (condition.kind === "entity-count-below" && condition.count !== undefined) seen.count = true;
+          if (condition.targetNodeTypes?.some((type) => newDefenseNodeTypes.has(type))) seen.newDefenseNodeTarget = true;
+        }
+        for (const action of event.actions as { kind: string; targetNodeTypes?: readonly string[]; flagIndex?: number }[]) {
+          if (action.kind === "move-toward-node-type") seen.moveTowardNodeType = true;
+          if (action.kind === "set-flag" && action.flagIndex !== undefined) seen.setFlag = true;
+          if (action.targetNodeTypes?.some((type) => newDefenseNodeTypes.has(type))) seen.newDefenseNodeTarget = true;
+        }
+      }
+    }
+
+    for (const [key, value] of Object.entries(seen)) {
+      expect(value, `never saw ${key} across 400 seeds`).toBe(true);
+    }
+  });
 });
 
 describe("generatePopulation", () => {

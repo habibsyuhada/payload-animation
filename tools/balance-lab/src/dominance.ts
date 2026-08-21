@@ -1,4 +1,5 @@
 import type { DefenseArchetype } from "./archetypes.js";
+import { defenseDepthBand, virusDepthBand } from "./depth-band.js";
 import { KNOWN_DOMINANCE, type KnownDominance } from "./known-dominance.js";
 import { WINRATE_CEILING, WINRATE_FLOOR } from "./report.js";
 import { runMatchup, type MatchupResult } from "./run-matchup.js";
@@ -78,6 +79,48 @@ export function isDominanceClean(report: DominanceReport): boolean {
   return report.dominantViruses.length === 0 && report.dominantDefenses.length === 0;
 }
 
+/** 1-4, `depth-band.ts`'s own ceiling — a depth-4 build can reach anything a research node covers. */
+export type DepthBand = 1 | 2 | 3 | 4;
+export const DEPTH_BANDS: readonly DepthBand[] = [1, 2, 3, 4];
+
+export interface BandedDominanceReport {
+  readonly band: DepthBand;
+  /** How many of the full population/defense set actually fell within this band — a band with a
+   * thin roster is a coverage gap worth knowing about even when it reports clean, not something to
+   * silently skip (PLAN.md 8.8's own "no silent caps" discipline). */
+  readonly populationInBand: number;
+  readonly defensesInBand: number;
+  readonly report: DominanceReport | null;
+}
+
+/**
+ * PLAN.md 8.8 §C.6: "Generator dan arketipe pertahanan dibatasi ke depth ≤ D ... dan pencarian
+ * dominasi jalan per pita. Pemain depth-1 tidak boleh bertemu pertahanan depth-4, dan dominasi di
+ * dalam satu pita adalah masalah nyata yang hari ini tidak terukur sama sekali." Band 4 is a
+ * superset of every earlier band (depth ≤ 4 is everything `depth-band.ts` can produce), so it
+ * doubles as the un-banded, whole-population check the tool ran before this existed.
+ *
+ * A band whose population or defense side is empty is skipped rather than searched — `searchDominance`
+ * treats "zero opponents met" as vacuously beating everyone, which would flag every entrant as
+ * dominant for nothing. Each band gets its own seed slice (`seedBase + band * 10_000_000`) so
+ * bands never draw overlapping seeds from each other, keeping every band's own result reproducible
+ * in isolation.
+ */
+export function searchDominanceByBand(population: readonly GeneratedVirus[], defenses: readonly DefenseArchetype[], sampleSize: number, seedBase: number): readonly BandedDominanceReport[] {
+  return DEPTH_BANDS.map((band) => {
+    const bandPopulation = population.filter((virus) => virusDepthBand(virus.virus) <= band);
+    const bandDefenses = defenses.filter((defense) => defenseDepthBand(defense.graph) <= band);
+    if (bandPopulation.length === 0 || bandDefenses.length === 0) {
+      return { band, populationInBand: bandPopulation.length, defensesInBand: bandDefenses.length, report: null };
+    }
+    return { band, populationInBand: bandPopulation.length, defensesInBand: bandDefenses.length, report: searchDominance(bandPopulation, bandDefenses, sampleSize, seedBase + band * 10_000_000) };
+  });
+}
+
+export function isBandedDominanceClean(bands: readonly BandedDominanceReport[]): boolean {
+  return bands.every((entry) => entry.report === null || isDominanceClean(entry.report));
+}
+
 export interface UnexpectedFindings {
   readonly viruses: readonly DominantVirus[];
   readonly defenses: readonly DominantDefense[];
@@ -99,6 +142,21 @@ export function unexpectedFindings(report: DominanceReport, known: KnownDominanc
 
 export function hasUnexpectedFindings(findings: UnexpectedFindings): boolean {
   return findings.viruses.length > 0 || findings.defenses.length > 0;
+}
+
+/** `unexpectedFindings`, run per band and flattened — a build only has to be flagged once even if
+ * it turns up dominant in more than one band (it will, since bands nest: anything true of band 2
+ * is still true of band 3 and 4 unless a deeper opponent finally answers it). */
+export function unexpectedFindingsByBand(bands: readonly BandedDominanceReport[], known: KnownDominance = KNOWN_DOMINANCE): UnexpectedFindings {
+  const viruses = new Map<string, DominantVirus>();
+  const defenses = new Map<string, DominantDefense>();
+  for (const entry of bands) {
+    if (!entry.report) continue;
+    const found = unexpectedFindings(entry.report, known);
+    for (const virus of found.viruses) viruses.set(virus.name, virus);
+    for (const defense of found.defenses) defenses.set(defense.name, defense);
+  }
+  return { viruses: [...viruses.values()], defenses: [...defenses.values()] };
 }
 
 function formatPercent(ratio: number): string {
@@ -132,6 +190,68 @@ export function renderDominanceSection(report: DominanceReport): string {
     }
   }
   lines.push("");
+
+  const known = KNOWN_DOMINANCE.defenses.concat(KNOWN_DOMINANCE.viruses);
+  if (known.length > 0) {
+    lines.push("Known and already tracked (CI does not fail on these — see `src/known-dominance.ts`):");
+    lines.push("");
+    for (const entry of known) {
+      lines.push(`- **${entry.name}** — ${entry.reason}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** Just the two findings bullets `renderDominanceSection` prints — factored out so the banded
+ * renderer below can put one under each band's own heading without repeating the "known and
+ * tracked" footer once per band. */
+function renderFindingsBullets(report: DominanceReport): string {
+  const lines: string[] = [];
+  if (report.dominantViruses.length === 0) {
+    lines.push("- No generated sheet beat every defense archetype in this band.");
+  } else {
+    for (const virus of report.dominantViruses) {
+      lines.push(`- **${virus.name}** (${virus.weightKb} KB) wins at least ${formatPercent(virus.worstCaseWinrate)} against *every* defense in this band: \`${virus.description}\``);
+    }
+  }
+  if (report.dominantDefenses.length === 0) {
+    lines.push("- No defense archetype held every generated sheet below the floor in this band.");
+  } else {
+    for (const defense of report.dominantDefenses) {
+      lines.push(`- **${defense.name}** holds every generated sheet in this band to at most ${formatPercent(defense.bestCaseAttackerWinrate)} — the RULESET §9 "ICE Nest" shape.`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * PLAN.md 8.8: the search rendered per research-depth band, so "does dominance exist within a band
+ * a real player would actually reach" is answerable at a glance instead of averaged away by the
+ * deepest, best-equipped sheets in the un-banded search. Band 4 is the superset of every shallower
+ * band (`depth-band.ts`'s own ceiling), so its numbers double as what `renderDominanceSection`
+ * alone used to report before banding existed.
+ */
+export function renderBandedDominanceSection(bands: readonly BandedDominanceReport[]): string {
+  const lines: string[] = [];
+  lines.push("## Dominance search (V7.4, ruleset v2), per research-depth band");
+  lines.push("");
+  lines.push(`A build is flagged as **dominant** only when it beats *every* opponent it met within its own band: a virus above ${formatPercent(WINRATE_CEILING)} against all defenses, or a defense holding every attacker below ${formatPercent(WINRATE_FLOOR)}.`);
+  lines.push("");
+
+  for (const entry of bands) {
+    lines.push(`### Pita depth ≤ ${entry.band}`);
+    lines.push("");
+    if (!entry.report) {
+      lines.push(`- Dilewati: ${entry.populationInBand} sheet, ${entry.defensesInBand} pertahanan pada pita ini — butuh keduanya untuk mengukur apa pun (coverage gap, bukan hasil bersih).`);
+      lines.push("");
+      continue;
+    }
+    lines.push(`${entry.report.populationSize} sheet x ${entry.defensesInBand} pertahanan, ${entry.report.sampleSize} seed per matchup.`);
+    lines.push("");
+    lines.push(renderFindingsBullets(entry.report));
+    lines.push("");
+  }
 
   const known = KNOWN_DOMINANCE.defenses.concat(KNOWN_DOMINANCE.viruses);
   if (known.length > 0) {

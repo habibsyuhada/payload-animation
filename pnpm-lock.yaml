@@ -209,6 +209,9 @@ importers:
 
   tools/balance-lab:
     dependencies:
+      '@payload/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@payload/sim':
         specifier: workspace:*
         version: link:../../packages/sim
