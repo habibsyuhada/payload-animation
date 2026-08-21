@@ -49,6 +49,9 @@ jobs:
     # recorded in tools/balance-lab/src/known-dominance.ts do not fail it — that file is the
     # outstanding balance debt, and shrinking it is the release gate for shipping v2 to players.
     # Its own job because the search is ~7000 battles (about a minute), not because it is optional.
+    # The `dominance` script builds its own dependencies through turbo first: balance-lab's tsc
+    # resolves @payload/sim through that package's dist/, so a job that only installs and runs
+    # would fail on a clean checkout even though it passes on a machine that has built before.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

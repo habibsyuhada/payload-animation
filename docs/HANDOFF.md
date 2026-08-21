@@ -59,8 +59,8 @@ paling langsung menyerang penyebabnya, tapi **belum dipilih** — dan perlu tabe
 Sebagian besar dari 20 matchup arketipe masih di luar [25%, 75%] — sama seperti v1, dan sebagian
 memang disengaja (arketipenya build ekstrem, bukan sampel pemain rata-rata). Profil v2 mendekati v1
 setelah perbaikan kematian di §13, artinya event sheet tidak diam-diam menggeser keseimbangan.
-`tools/balance-lab/REPORT.md` selalu terbaru; regenerasi dengan `node dist/cli.js > REPORT.md`
-setelah `pnpm --filter @payload/balance-lab build`.
+`tools/balance-lab/REPORT.md` selalu terbaru; regenerasi dengan
+`pnpm --filter @payload/balance-lab build:deps && node tools/balance-lab/dist/cli.js > tools/balance-lab/REPORT.md`.
 
 ### (c) Offline-first — langkah 1 sudah jalan, sisanya belum
 
@@ -136,6 +136,7 @@ PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium pnpm test    # 386 test hijau
 pnpm --filter @payload/balance-lab dominance       # cek dominasi (~1 menit), ini yang di CI
 pnpm --filter @payload/balance-lab report          # laporan lengkap; exit 1 selama masih ada
                                                    # matchup di luar pita — itu memang backlog
+# Keduanya mem-build dependensinya sendiri lewat turbo (`build:deps`), jadi jalan dari clone bersih.
 pnpm dev --port 5199                               # /#/virus-lab dan /#/defend
 ```
 
@@ -183,7 +184,14 @@ Nomor 1–10 dari handoff sebelumnya masih berlaku semua; yang di bawah ini tamb
 16. **Kamera Defend sengaja TIDAK disimpan.** Halaman itu mem-frame seluruh graf pada layout
     pertama; zoom/pan yang dipulihkan akan berkelahi dengan itu dan bisa membuka ke ruang kosong
     di sebelah layout yang barusan disimpan.
-17. **App bar adalah `<h1>` halaman.** Sebelumnya `Screen` menggambar `<h1>{title}</h1>` tepat di
+17. **Script paket tidak mem-build dependensi workspace-nya.** `pnpm build` di dalam sebuah paket
+    cuma menjalankan `tsc` untuk paket itu; yang mengurus urutan dependensi adalah **turbo**
+    (`dependsOn: ["^build"]` di `turbo.json`). Job CI `balance-dominance` awalnya memanggil script
+    paket langsung dan gagal di checkout bersih (`Cannot find module '@payload/sim'`) — padahal
+    lolos di mesin yang sudah pernah build. Kalau bikin job CI yang memanggil script paket, pastikan
+    dependensinya dibangun dulu; di sini lewat `build:deps`. **Uji dengan menghapus `dist/`
+    dependensinya, bukan cuma menjalankannya di mesin sendiri.**
+18. **App bar adalah `<h1>` halaman.** Sebelumnya `Screen` menggambar `<h1>{title}</h1>` tepat di
     bawah bar yang sudah menyebut judul yang sama — satu hal ditulis dua kali di bagian layar yang
     paling mahal. Kalau menambah layar baru, jangan tambahkan heading judul sendiri; cukup `title`.
 
