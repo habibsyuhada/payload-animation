@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAdjacency, isReachable, shortestPath, validateDefenseGraph } from "../src/graph.js";
 import { RULESET_V1 } from "../src/ruleset.js";
+import { RULESET_V2 } from "../src/ruleset-v2.js";
 import type { DefenseGraph, DefenseNode } from "../src/types.js";
 
 /**
@@ -210,5 +211,59 @@ describe("validateDefenseGraph — invalid cases", () => {
     const graph = baseGraph({ coreHp: 2200 }); // tier-3's coreHp (RULESET.md §5.2)
     const result = validateDefenseGraph(graph, RULESET_V1, 3);
     expect(result).toEqual({ valid: true, errors: [] });
+  });
+});
+
+/**
+ * 8.1d: validateDefenseGraph is now version-aware via topologyRulesFor(ruleset), and a node with
+ * no price under the given ruleset version is REPORTED (unsupported-node-type), not thrown — that
+ * used to be an uncaught exception from inside the cost-summing reduce (ADR 0007's "bug laten").
+ */
+describe("validateDefenseGraph — v2", () => {
+  it("accepts the same v1-shaped graph under RULESET_V2 — topology is unchanged between versions", () => {
+    const result = validateDefenseGraph(baseGraph(), RULESET_V2, 1);
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  it("reports unsupported-node-type instead of throwing for a v2-only type this ruleset doesn't price yet (8.2a gives jammer a price)", () => {
+    const graph = baseGraph({
+      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
+    });
+    expect(() => validateDefenseGraph(graph, RULESET_V2, 1)).not.toThrow();
+    const result = validateDefenseGraph(graph, RULESET_V2, 1);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "unsupported-node-type", nodeId: 6 }));
+  });
+
+  it("still runs every other check on a graph with an unpriced node — one bad node doesn't mask the rest", () => {
+    const graph = baseGraph({
+      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
+      coreHp: 999, // also wrong, independent of the jammer node
+    });
+    const result = validateDefenseGraph(graph, RULESET_V2, 1);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "unsupported-node-type", nodeId: 6 }));
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "core-hp-mismatch" }));
+  });
+
+  it("excludes an unpriced node from the budget sum rather than letting it poison the total", () => {
+    // router(1) + firewall I(3) = 4pt if the jammer is excluded; well within tier-1's 20pt budget.
+    const graph = baseGraph({
+      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
+    });
+    const result = validateDefenseGraph(graph, RULESET_V2, 1);
+    expect(result.errors).not.toContainEqual(expect.objectContaining({ code: "budget-exceeded" }));
+  });
+
+  it("still rejects an unknown type under RULESET_V1 the same way (v1 was never affected by the crash)", () => {
+    const graph = baseGraph({
+      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
+    });
+    expect(() => validateDefenseGraph(graph, RULESET_V1, 1)).not.toThrow();
+    const result = validateDefenseGraph(graph, RULESET_V1, 1);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "unsupported-node-type", nodeId: 6 }));
   });
 });

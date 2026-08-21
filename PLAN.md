@@ -207,7 +207,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       v1) — test 1:1 structural; `nodes/` & `ruleset.ts` tidak tersentuh; hash tidak bergerak.
 - [x] **8.1c** Arahkan `engine-v2.ts` ke `nodes-v2/` (hanya blok import) — hash `sheet-v2` tetap
       `c97faa3a`.
-- [ ] **8.1d** `validateDefenseGraph` sadar-versi lewat `topologyRulesFor(ruleset)` + kode error
+- [x] **8.1d** `validateDefenseGraph` sadar-versi lewat `topologyRulesFor(ruleset)` + kode error
       `unsupported-node-type` + perbaiki bug laten `getDefenseNodeCost` yang melempar (jadi melapor)
       untuk tipe tak dikenal — 18 kasus `graph.test.ts` hijau tanpa diedit, kasus v2 baru ditambah.
 - [ ] **8.2a** Lima node baru (Patch Server, Tarpit, Jammer, Turnstile, Alarm Relay — lihat ADR 0007
