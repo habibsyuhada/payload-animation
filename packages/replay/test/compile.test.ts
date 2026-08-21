@@ -1,7 +1,7 @@
 import { simulate } from "@payload/sim";
 import type { BattleInput, DefenseGraph, DefenseNode } from "@payload/sim";
 import { describe, expect, it } from "vitest";
-import { compileTimeline, findTrack, sampleCoreHp, sampleIntegrity, samplePosition, type Layout } from "../src/compile.js";
+import { compileTimeline, findTrack, rulesFiringAt, sampleCoreHp, sampleIntegrity, samplePosition, type Layout } from "../src/compile.js";
 
 // entry(1)/(2) --400du--> router(3) --600du--> core(4), speed 50: arrives router tick 8,
 // departs tick 9, arrives core tick 21 (matches packages/sim's engine.test.ts Scenario 1).
@@ -76,6 +76,45 @@ describe("compileTimeline", () => {
     const damageMarkers = timeline.markers.filter((marker) => marker.kind === "damage");
     expect(damageMarkers.length).toBeGreaterThan(0);
     expect(damageMarkers.every((marker) => marker.nodeId === 3)).toBe(true);
+  });
+});
+
+/** V7.5: a ruleset v2 battle over the same graph, so the rule track has something to carry. */
+const SHEET_INPUT: BattleInput = {
+  rulesetVersion: "v2",
+  seed: 1,
+  virus: {
+    events: [
+      { id: "attack", conditions: [{ kind: "node-here-is", targetNodeTypes: ["core"] }], actions: [{ kind: "brute-force", tier: 1 }], children: [] },
+      { conditions: [], actions: [{ kind: "move-toward-core" }], children: [] },
+    ],
+  },
+  defense: GRAPH,
+};
+
+describe("compileTimeline — rule firings (ruleset v2)", () => {
+  it("carries one entry per rule-fired event, named by the sheet's own id where it has one", () => {
+    const timeline = compileTimeline(simulate(SHEET_INPUT), LAYOUT);
+    expect(timeline.ruleFirings.length).toBeGreaterThan(0);
+    expect(new Set(timeline.ruleFirings.map((firing) => firing.ruleId))).toEqual(new Set(["attack", "1"]));
+    // Firings are in tick order, converted to seconds like every other track.
+    const times = timeline.ruleFirings.map((firing) => firing.t);
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+  });
+
+  it("stays empty for a v1 log — that engine has no rules to fire", () => {
+    expect(compileTimeline(simulate(INPUT), LAYOUT).ruleFirings).toEqual([]);
+  });
+
+  it("reports a rule as firing for a window after its tick, not just on the exact frame", () => {
+    const timeline = compileTimeline(simulate(SHEET_INPUT), LAYOUT);
+    // The gated rule, which only starts firing once the virus is standing on the Core.
+    const first = timeline.ruleFirings.find((firing) => firing.ruleId === "attack")!;
+    expect(first.t).toBeGreaterThan(0.5);
+    expect(rulesFiringAt(timeline, first.t, 0.3).has("attack")).toBe(true);
+    expect(rulesFiringAt(timeline, first.t + 0.2, 0.3).has("attack")).toBe(true);
+    // Before it ever fired, it is dark.
+    expect(rulesFiringAt(timeline, first.t - 0.3, 0.3).has("attack")).toBe(false);
   });
 });
 

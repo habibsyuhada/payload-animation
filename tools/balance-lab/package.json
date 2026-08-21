@@ -8,7 +8,9 @@
     "test": "vitest run",
     "lint": "eslint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "report": "pnpm build && node dist/cli.js"
+    "report": "pnpm build:deps && node dist/cli.js",
+    "dominance": "pnpm build:deps && node dist/dominance-cli.js",
+    "build:deps": "pnpm -w exec turbo run build --filter=@payload/balance-lab..."
   },
   "dependencies": {
     "@payload/sim": "workspace:*"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import { getScannerConfig } from "../../src/nodes/scanner.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 

@@ -1,6 +1,11 @@
 import type { BattleInput, DefenseGraph, DefenseNode, VirusDesign } from "@payload/sim";
 import type { Layout } from "@payload/replay";
-import type { BlockCategory } from "./blockCatalog.js";
+/**
+ * Onboarding's own colour buckets. They used to be v1's `BlockCategory`, which died with the block
+ * chain (V7.3) — the tutorials still speak in categories, so they now own the type rather than
+ * keeping a 200-line v1 catalog alive for one import.
+ */
+export type BlockCategory = "movement" | "sensor" | "condition" | "attack" | "stealth" | "utility";
 
 /**
  * onboardingTutorials.ts — C3.4: 5 fixed battles vs a static AI defense, each built around one

@@ -1,10 +1,11 @@
-import { getDefenseNodeCost, getIceSentryConfig, type BattleLog, type BlockTier } from "@payload/sim";
+import { getDefenseNodeCost, getIceSentryConfig, type BattleLog, type BlockTier, type SheetEvent } from "@payload/sim";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
-import { findLogicBlockEntry, findMovementEntry, type BlockCategory, type LogicBlockCatalogEntry } from "../data/blockCatalog.js";
+import { findActionEntry, findConditionEntry } from "../data/sheetCatalog.js";
 import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
 import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
+import { useAppShellStore } from "../state/appShellStore.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -106,16 +107,35 @@ const PICKER_CATALOG: readonly { type: PlaceableNodeType; label: string; color: 
   ...PLACEABLE_NODE_CATALOG.map((entry) => ({ type: entry.type as PlaceableNodeType, label: entry.label, color: entry.color, shape: entry.shape, tiered: entry.tiered })),
 ];
 
-/** Block-category colours, same mapping Virus Lab uses so a block reads the same on both screens. */
-function categoryColor(category: BlockCategory): string {
+const ROMAN_TIER: Record<BlockTier, string> = { 1: "I", 2: "II", 3: "III" };
+
+/** One attacker rule rendered as a line of plain language: what it checks, then what it does. */
+function describeRule(event: SheetEvent): string {
+  const conditions =
+    event.conditions.length === 0
+      ? "SELALU"
+      : event.conditions.map((condition) => `${condition.negate ? "TIDAK " : ""}${findConditionEntry(condition.kind).label}${condition.targetNodeTypes ? ` ${condition.targetNodeTypes.join("/")}` : ""}`).join(" & ");
+  const actions = event.actions.map((action) => `${findActionEntry(action.kind).label}${action.tier && action.tier > 1 ? ` ${ROMAN_TIER[action.tier]}` : ""}`).join(", ");
+  return `${conditions} → ${actions || "—"}`;
+}
+
+/** Colour a rule by the first action it takes — what the rule is *for*, at a glance. */
+function ruleColor(event: SheetEvent): string {
+  const first = event.actions[0];
+  if (!first) {
+    return theme.border;
+  }
+  const category = findActionEntry(first.kind).category;
   return category === "movement" ? theme.faction.movement : theme.faction[category];
 }
 
-const ROMAN_TIER: Record<BlockTier, string> = { 1: "I", 2: "II", 3: "III" };
-
-/** The tier-specific line for a block, for the chip's tooltip — what this tier actually does. */
-function findLogicBlockTierDescription(entry: LogicBlockCatalogEntry, tier: BlockTier): string {
-  return entry.tiers.find((candidate) => candidate.tier === tier)?.description ?? entry.tiers[0]!.description;
+/** The attacker's sheet, flattened in the same depth-first order the engine addresses rows by, so
+ * a `rule-fired` event's row path ("1.0") points at exactly one chip. */
+function flattenRules(events: readonly SheetEvent[], prefix = ""): { readonly path: string; readonly depth: number; readonly event: SheetEvent }[] {
+  return events.flatMap((event, index) => {
+    const path = prefix === "" ? String(index) : `${prefix}.${index}`;
+    return [{ path, depth: path.split(".").length - 1, event }, ...flattenRules(event.children, path)];
+  });
 }
 
 const VERDICT_COPY: Record<DefenseVerdict, string> = {
@@ -287,6 +307,8 @@ export function Defend(): JSX.Element {
   const [isTesting, setTesting] = useState(false);
   const [testReport, setTestReport] = useState<DefenseTestReport | null>(null);
   const [playbackLog, setPlaybackLog] = useState<BattleLog | null>(null);
+  /** Which attacker's battle is on screen — the rule chips only light for the sheet being played. */
+  const [playbackTrialId, setPlaybackTrialId] = useState<string | null>(null);
   const [playbackSeconds, setPlaybackSeconds] = useState(0);
   const [isPlaying, setPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -335,6 +357,14 @@ export function Defend(): JSX.Element {
     frameId = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frameId);
   }, [isPlaying, playbackDuration, playbackSpeed]);
+
+  /* Defend covers the header and nav entirely (it is `position: fixed`), so the title it
+   * registers is never visible behind it. It registers anyway because it is a nav destination
+   * now: the shell's header has to be showing the right screen the moment the page is closed. */
+  const setActiveScreenTitle = useAppShellStore((state) => state.setActiveScreenTitle);
+  useEffect(() => {
+    setActiveScreenTitle("Defense");
+  }, [setActiveScreenTitle]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -527,6 +557,7 @@ export function Defend(): JSX.Element {
     setPlaybackSeconds(0);
     setPlaying(true);
     setPlaybackLog(report.showcase.showcase);
+    setPlaybackTrialId(report.showcase.virus.id);
     // Frame the whole graph before the battle starts — an attack happening off-screen is the one
     // way this feature can silently fail. The results sheet owns the bottom of the screen, so the
     // fit targets the strip above it rather than the full viewport.
@@ -538,6 +569,7 @@ export function Defend(): JSX.Element {
   function stopPlayback(): void {
     setPlaying(false);
     setPlaybackLog(null);
+    setPlaybackTrialId(null);
     setPlaybackSeconds(0);
     playbackStartRef.current = null;
   }
@@ -820,7 +852,7 @@ export function Defend(): JSX.Element {
 
         <div className="payload-defend-topbar">
           <Link to="/" className="payload-defend-exit" data-testid="defend-exit">
-            ← Keluar
+            ← HQ
           </Link>
           <button type="button" className="payload-defend-test-btn" data-testid="defend-test" onPointerDown={(event) => event.stopPropagation()} onClick={handleTestDefense} disabled={isTesting}>
             {isTesting ? "Menguji…" : "🧪 Uji pertahanan"}
@@ -937,7 +969,7 @@ export function Defend(): JSX.Element {
                     <span className={trial.wins > 0 ? "payload-defend-trial-win" : "payload-defend-trial-loss"}>
                       {trial.wins > 0 ? `tembus ${trial.wins}/${trial.runs}` : `gagal ${trial.runs}×`}
                     </span>
-                    <button type="button" data-testid="defend-trial-watch" className="payload-defend-trial-watch" onClick={() => { playbackStartRef.current = null; setPlaybackSeconds(0); setPlaying(true); setPlaybackLog(trial.showcase); }}>
+                    <button type="button" data-testid="defend-trial-watch" className="payload-defend-trial-watch" onClick={() => { playbackStartRef.current = null; setPlaybackSeconds(0); setPlaying(true); setPlaybackLog(trial.showcase); setPlaybackTrialId(trial.virus.id); }}>
                       Tonton
                     </button>
                   </div>
@@ -945,17 +977,23 @@ export function Defend(): JSX.Element {
                     <span className="payload-defend-trial-fill" style={{ width: `${Math.round(trial.winrate * 100)}%`, background: trial.wins > 0 ? theme.faction.stealth : theme.faction.attack }} />
                   </div>
                   <small>{trial.virus.description}</small>
-                  {/* The attacker's actual loadout — the same block vocabulary Virus Lab builds
-                  from, so "why did this one get through?" is answerable by reading it. */}
+                  {/* The attacker's actual event sheet, in the same vocabulary Virus Lab builds
+                  from, so "why did this one get through?" is answerable by reading it. While its
+                  battle is playing back, the rule that just fired lights up (ADR 0006 §6) — which
+                  is what turns a sheet from a list into an explanation. */}
                   <ul className="payload-defend-loadout" data-testid="defend-trial-loadout" data-virus={trial.virus.id}>
-                    <li className="payload-defend-block" style={{ borderColor: categoryColor("movement") }} title={findMovementEntry(trial.virus.virus.movement.kind).description}>
-                      {findMovementEntry(trial.virus.virus.movement.kind).label}
-                    </li>
-                    {trial.virus.virus.blocks.map((block, index) => {
-                      const entry = findLogicBlockEntry(block.kind);
+                    {flattenRules(trial.virus.virus.events).map(({ path, depth, event }) => {
+                      const isFiring = playbackTrialId === trial.virus.id && playbackFrame?.firedRuleIds.has(path) === true;
                       return (
-                        <li key={`${block.kind}-${index}`} className="payload-defend-block" style={{ borderColor: categoryColor(entry.category) }} title={findLogicBlockTierDescription(entry, block.tier)}>
-                          {entry.label} {ROMAN_TIER[block.tier]}
+                        <li
+                          key={path}
+                          className={`payload-defend-block${isFiring ? " payload-defend-block--firing" : ""}`}
+                          data-testid="defend-trial-rule"
+                          data-rule-path={path}
+                          data-firing={isFiring}
+                          style={{ borderColor: ruleColor(event), marginLeft: depth * 10 }}
+                        >
+                          {describeRule(event)}
                         </li>
                       );
                     })}

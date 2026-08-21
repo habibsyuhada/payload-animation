@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulate } from "../src/engine.js";
+import { simulate } from "../src/simulate.js";
 import type { BattleInput, BattleLog, DefenseGraph, DefenseNode } from "../src/types.js";
 
 /**
@@ -140,17 +140,72 @@ const SCENARIO_TIMEOUT: BattleInput = {
   } satisfies DefenseGraph,
 };
 
+/**
+ * V7.1: the same guarantee for the v2 sheet engine. Sheet evaluation, slot arbitration, `once`
+ * bookkeeping and `rule-fired` all have to land on the identical bytes everywhere, or a replay
+ * would disagree with the battle it replays.
+ */
+const SCENARIO_SHEET_V2: BattleInput = {
+  rulesetVersion: "v2",
+  seed: 13,
+  virus: {
+    events: [
+      {
+        conditions: [{ kind: "honeypot-near", tier: 2 }],
+        actions: [{ kind: "move-avoiding-hazards" }],
+        children: [],
+      },
+      {
+        conditions: [{ kind: "node-here-is", targetNodeTypes: ["firewall"] }],
+        actions: [{ kind: "exploit", tier: 1 }, { kind: "brute-force", tier: 2 }],
+        children: [{ conditions: [{ kind: "integrity-below", integrityThresholdPermille: 600 }], actions: [{ kind: "cloak", tier: 1 }], children: [] }],
+        once: "node",
+      },
+      { conditions: [], actions: [{ kind: "self-repair", tier: 2 }, { kind: "move-toward-core" }], children: [] },
+    ],
+  },
+  defense: {
+    nodes: [
+      node(1, "entry"),
+      node(2, "entry"),
+      node(3, "router"),
+      node(4, "firewall", 1),
+      node(5, "ice-sentry", 1),
+      node(6, "scanner", 1),
+      node(7, "trap", 1),
+      node(8, "honeypot", 1),
+      node(9, "core"),
+    ],
+    edges: [
+      { from: 1, to: 3, lengthDu: 300 },
+      { from: 2, to: 3, lengthDu: 300 },
+      { from: 3, to: 4, lengthDu: 300 },
+      { from: 3, to: 5, lengthDu: 300 },
+      { from: 4, to: 6, lengthDu: 300 },
+      { from: 4, to: 7, lengthDu: 300 },
+      { from: 6, to: 8, lengthDu: 300 },
+      { from: 7, to: 9, lengthDu: 300 },
+      { from: 8, to: 9, lengthDu: 300 },
+    ],
+    entryNodeIds: [1, 2],
+    coreNodeId: 9,
+    coreHp: 400,
+  } satisfies DefenseGraph,
+};
+
 describe("cross-platform determinism (S1.6)", () => {
   it.each([
     ["movement-only", SCENARIO_MOVEMENT_ONLY, "ecc90372"],
     ["random-walk", SCENARIO_RANDOM_WALK, "575a36b9"],
     ["full-combat", SCENARIO_FULL_COMBAT, "4f0505d5"],
     ["timeout", SCENARIO_TIMEOUT, "552300e8"],
+    ["sheet-v2", SCENARIO_SHEET_V2, "c97faa3a"],
   ])("BattleLog hash for %s matches the frozen cross-platform value", (_name, input, expectedHash) => {
     expect(hashBattleLog(simulate(input))).toBe(expectedHash);
   });
 
   it("is a pure function of the input — hashing the same BattleInput twice in this same run agrees", () => {
     expect(hashBattleLog(simulate(SCENARIO_FULL_COMBAT))).toBe(hashBattleLog(simulate(SCENARIO_FULL_COMBAT)));
+    expect(hashBattleLog(simulate(SCENARIO_SHEET_V2))).toBe(hashBattleLog(simulate(SCENARIO_SHEET_V2)));
   });
 });

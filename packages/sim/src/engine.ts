@@ -29,7 +29,8 @@ import {
 } from "./nodes/index.js";
 import { createRng } from "./rng.js";
 import { getMovementBlockConfig } from "./ruleset.js";
-import type { BattleEvent, BattleInput, BattleLog, BlockTier, DefenseGraph, DefenseNode, DefenseNodeType, LogicBlock, Score } from "./types.js";
+import { computeScore } from "./score.js";
+import type { BattleEvent, BattleInputV1, BattleLog, BlockTier, DefenseGraph, DefenseNode, DefenseNodeType, LogicBlock } from "./types.js";
 
 /**
  * S1.5 scope: the 12 v1 logic blocks (RULESET.md §4) are now wired into the tick loop built by
@@ -276,29 +277,13 @@ function applyOverloadSplash(
   });
 }
 
-interface ScoreParams {
-  readonly integrityRatioPermille: number;
-  readonly coreRatioPermille: number;
-  readonly nodesDestroyed: number;
-  readonly ticksElapsed: number;
-}
-
-/** docs/RULESET.md §8. */
-export function computeScore(winner: "attacker" | "defender", params: ScoreParams): Score {
-  const timeBonus = Math.max(0, Math.floor((BATTLE_TICK_LIMIT - params.ticksElapsed) / 4));
-  const base = winner === "attacker" ? 500 : 300;
-  const ratio = winner === "attacker" ? params.integrityRatioPermille : params.coreRatioPermille;
-  const value = base + Math.floor((ratio * 300) / 1000) + params.nodesDestroyed * 40 + timeBonus;
-  return {
-    value,
-    integrityRatioPermille: params.integrityRatioPermille,
-    coreRatioPermille: params.coreRatioPermille,
-    nodesDestroyed: params.nodesDestroyed,
-    timeBonus,
-  };
-}
-
-export function simulate(input: BattleInput): BattleLog {
+/**
+ * The frozen v1 engine (ADR 0002 semantics). Every BattleLog that says `"v1"` is defined by this
+ * function; it must keep producing byte-identical output forever (PLAN.md DoD #3), so v2 work
+ * belongs in engine-v2.ts and never here. Reached through `simulate()`, which dispatches on the
+ * input's `rulesetVersion`.
+ */
+export function simulateV1(input: BattleInputV1): BattleLog {
   const graph = input.defense;
   const coreNode = findNode(graph, graph.coreNodeId);
   if (coreNode.type !== "core") {

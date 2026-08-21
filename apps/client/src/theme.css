@@ -25,43 +25,196 @@ body {
   height: 100%;
 }
 
+/* App header. On the hub it is just the brand; on every other screen it is the way back, which
+ * is the only navigation this app has now — see App.tsx on why the bottom nav went away. */
+.payload-app > header {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 1rem;
+  background: var(--color-background-panel);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* Both header headings are <h1> (one per page, in the bar) and so need their browser default
+ * size and margin taken off — they are app-bar labels, not page titles in the document sense. */
+.payload-app > header h1 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.payload-brand {
+  color: var(--color-text);
+  letter-spacing: 0.22em;
+}
+
+/* Sized as a real tap target rather than a line of text: it is the only way out of a screen. */
+.payload-app > header .payload-back {
+  padding: 0.25rem 0.5rem;
+  margin: -0.25rem 0 -0.25rem -0.5rem;
+  border-radius: 0.35rem;
+  color: var(--color-faction-movement);
+  text-decoration: none;
+  letter-spacing: 0.1em;
+}
+
+.payload-app > header .payload-back:active {
+  background: var(--color-background-panel-raised);
+}
+
+.payload-header-title {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Links inherit the theme instead of the browser's blue-underline default, which read as broken
+ * against a near-black palette. */
+.payload-app-content a {
+  color: var(--color-faction-movement);
+  text-decoration: none;
+}
+
+.payload-app-content a:hover {
+  text-decoration: underline;
+}
+
 .payload-app-content {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
 }
 
-.payload-nav {
-  display: flex;
-  border-top: 1px solid var(--color-border);
+/* --- Shared card, used by HQ's summaries and by the not-built-yet screens ----------------- */
+
+.payload-card {
+  display: block;
   background: var(--color-background-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  margin: 0 0 0.7rem;
+  color: inherit;
 }
 
-.payload-nav-link {
-  flex: 1;
-  padding: 0.6rem 0.25rem;
-  text-align: center;
-  font-size: 0.7rem;
-  color: var(--color-text-muted);
-  text-decoration: none;
-  border-top: 2px solid transparent;
-}
-
-.payload-nav-link.active {
+.payload-card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
   color: var(--color-text);
-  border-top-color: var(--color-faction-movement);
 }
 
-.payload-screen h1 {
-  margin-top: 0;
+.payload-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* Two cards sharing a row on the hub. They wrap on a very narrow screen rather than squeezing
+ * their labels, since there are only ever two of them. */
+.payload-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.payload-card-row > .payload-card {
+  flex: 1 1 8rem;
+}
+
+/* Quieter than a full destination card: reachable, but not competing with Virus and Pertahanan. */
+.payload-card--minor {
+  opacity: 0.75;
+}
+
+.payload-card--minor h2 {
+  font-size: 0.85rem;
+}
+
+/* A card that is itself a link (HQ's summaries) — the whole surface is the tap target. */
+a.payload-card {
+  text-decoration: none;
+}
+
+a.payload-card:hover {
+  border-color: var(--color-faction-movement);
+  text-decoration: none;
+}
+
+/* The headline number on an HQ summary: the one thing worth reading at arm's length. */
+.payload-card-stat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.payload-card-stat strong {
+  font-size: 1.15rem;
+  color: var(--color-text);
+}
+
+.payload-card-note--divided {
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.5rem;
+}
+
+.payload-card-note {
+  margin-top: 0.55rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Screens whose feature is not built yet. They look deliberate rather than broken: what it will
+ * be, and what it is waiting on. */
+.payload-soon {
+  border-style: dashed;
+}
+
+.payload-soon-tag {
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
 }
 
 .payload-screen-body {
   color: var(--color-text-muted);
   max-width: 40rem;
   line-height: 1.5;
+}
+
+/* Section headings inside a screen. Without the page <h1> above them (the app bar is the heading
+ * now) a browser-default h2 reads as the title of the whole screen, which is wrong and enormous —
+ * these are labels for the block under them. */
+.payload-screen-body > section > h2 {
+  margin: 1.2rem 0 0.5rem;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.payload-screen-body > section:first-child > h2 {
+  margin-top: 0;
+}
+
+.payload-screen-body > section > p {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
 }
 
 .payload-screen--full-bleed {
@@ -90,27 +243,147 @@ body {
   transition: width 0.15s ease-out;
 }
 
-.payload-chain-list {
+/* --- Virus Lab, ruleset v2 event sheet (V7.3) --------------------------------------------
+ * Every row is a card; children indent one step. The chips inside a card wrap rather than
+ * scroll, because a rule that runs off the side of a 390px screen is a rule nobody reads.
+ */
+
+.payload-sheet-hint {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+}
+
+.payload-sheet-list,
+.payload-sheet-children {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
+  gap: 0.5rem;
+}
+
+.payload-sheet-children {
+  margin-top: 0.5rem;
+  border-left: 2px solid var(--color-border);
+  padding-left: 0.5rem;
+}
+
+.payload-sheet-card {
+  background: var(--color-background-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  flex-direction: column;
   gap: 0.4rem;
 }
 
-.payload-chain-row {
+.payload-sheet-section {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.6rem;
-  background: var(--color-background-panel);
-  border-radius: 0.25rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
 }
 
-.payload-chain-label {
-  flex: 1;
-  color: var(--color-text);
+.payload-sheet-keyword {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.payload-sheet-chip-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.payload-sheet-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.2rem 0.4rem;
+  background: var(--color-background-panel-raised);
+  border-left: 3px solid var(--color-border);
+  border-radius: 0.3rem;
+  font-size: 0.85rem;
+}
+
+/* The name of a condition or action never breaks mid-word: a chip reading "Node saat / ini =" over
+ * three lines is worse than a chip that takes the full row. */
+.payload-sheet-chip-label {
+  white-space: nowrap;
+}
+
+.payload-sheet-chip button {
+  margin: 0;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.75rem;
+  border-radius: 0.3rem;
+}
+
+.payload-sheet-chip select {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.2rem;
+}
+
+.payload-sheet-chip-weight {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.payload-sheet-negate {
+  opacity: 0.45;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.payload-sheet-negate--on {
+  opacity: 1;
+  border-color: var(--color-faction-attack);
+  color: var(--color-faction-attack);
+}
+
+.payload-sheet-add {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  border-style: dashed;
+}
+
+.payload-sheet-row-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.35rem;
+}
+
+.payload-sheet-row-controls button {
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.payload-sheet-row-controls select {
+  font-size: 0.78rem;
+}
+
+.payload-sheet-picker-summary {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.25;
 }
 
 .payload-movement-option {
@@ -192,38 +465,6 @@ select {
   background: var(--color-background-panel-raised);
   color: var(--color-text);
   font: inherit;
-}
-
-.payload-palette-block {
-  cursor: grab;
-}
-
-.payload-palette-block:active {
-  cursor: grabbing;
-}
-
-.payload-chain-builder {
-  padding: 0.5rem;
-  border-radius: 0.75rem;
-  outline: 2px dashed transparent;
-  outline-offset: 6px;
-  transition: outline-color 0.15s ease-out;
-}
-
-.payload-chain-builder--drop-active {
-  outline-color: var(--color-faction-movement);
-}
-
-.payload-chain-row {
-  cursor: grab;
-  transition:
-    background-color 0.12s ease-out,
-    box-shadow 0.12s ease-out;
-}
-
-.payload-chain-row--drop-target {
-  background: var(--color-background-panel);
-  box-shadow: inset 0 2px 0 var(--color-faction-movement);
 }
 
 .payload-grid-editor {
@@ -530,11 +771,14 @@ select {
   cursor: pointer;
 }
 
+/* The attacker's event sheet: one row per rule, stacked so the reading order matches the order
+ * the engine evaluates in. Rules wrap rather than truncate — a half-shown rule explains nothing. */
 .payload-defend-loadout {
   list-style: none;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
   margin: 0.35rem 0 0;
   padding: 0;
 }
@@ -547,7 +791,17 @@ select {
   background: var(--color-background-panel-raised);
   color: var(--color-text);
   font-size: 0.66rem;
-  white-space: nowrap;
+  transition:
+    background-color 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+/* Lit while this rule's actions are landing in the battle playing above — the whole point of the
+ * sim's `rule-fired` event (ADR 0006 §6). */
+.payload-defend-block--firing {
+  background: var(--color-background-panel);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-faction-sensor);
 }
 
 .payload-defend-trial-watch {

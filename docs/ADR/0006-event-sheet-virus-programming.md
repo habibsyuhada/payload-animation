@@ -1,6 +1,7 @@
 # ADR 0006 — Event-sheet virus programming (ruleset v2)
 
-**Status:** proposed — design agreed, no code written yet
+**Status:** accepted — implemented in Fase 7 (V7.1–V7.5). Both open questions below are resolved;
+the resolutions are recorded at the end of this file and in the code that implements them.
 **Supersedes:** ADR 0002 (logic block chain semantics) for ruleset v2 onward; v1 stays frozen and replayable
 **Context:** `packages/sim/`, `apps/client/src/screens/VirusLab.tsx`, `docs/GDD.md` §4, `docs/RULESET.md` §4
 
@@ -171,14 +172,36 @@ found by players instead of by us.
   beginner trap: the editor ships a starter template containing `[always] → Move toward Core`, and
   the Virus Lab validator warns (not blocks) on a sheet with no movement action.
 
-## Open questions
+## Open questions — resolved during V7.1
 
-1. **Sheet-level vs per-node evaluation for movement.** Movement intent is decided every tick, but
-   the virus only *acts* on it when it is standing on a node (ADR 0001's movement model). Does an
-   intent written mid-transit queue for arrival, or is it discarded? Recommendation: queue the last
-   intent written during transit, applied on arrival — but this needs one worked example before it
-   is locked.
-2. **Do conditions see the node ahead, or only the current node?** Scan Ahead / Detect Honeypot
-   become conditions about a node the virus has not reached; ADR 0002 decision 3 deliberately made
-   v1's `IF node = T` about the *current* node. v2 needs both, named unambiguously in the editor
-   (`node saat ini` vs `node di depan`).
+1. **Sheet-level vs per-node evaluation for movement.** Resolved as recommended, with the worked
+   example the question asked for. The movement slot is resolved every tick; while the virus is
+   crossing an edge the winning intent is *queued*, last one winning, and on arrival it is used
+   **only if the sheet writes no intent on the arrival tick itself**. Worked example: a virus
+   leaves a Router under `[always] -> Move toward Core`; mid-transit a Honeypot comes into sensor
+   range and `[honeypot ahead] -> Move avoiding hazards` wins each remaining transit tick, so
+   "avoid" is what is queued. On arrival the sheet runs again at the new node — the Honeypot is
+   still in range, so the same rule wins and the queued copy is simply superseded. The queue only
+   matters when the *reason* has passed by the time the virus lands, and then the last thing the
+   virus decided while travelling is what it does. See `engine-v2.ts`'s movement phase.
+
+2. **Do conditions see the node ahead, or only the current node?** Both, named exactly as the
+   question proposed. `node-here-is` ("node saat ini") is the node underfoot and is false the whole
+   time the virus is crossing an edge; `node-ahead-is` ("node di depan") is the edge's far end while
+   in transit, and the first hop of the DU-shortest path to Core while standing still. Deriving it
+   from the graph rather than from the movement intent keeps a condition readable on its own and
+   keeps evaluation free of RNG. Priced apart, too: "ahead" costs the Scan Ahead half on top
+   (RULESET.md §10.1), because seeing round a corner is the thing Scan Ahead used to sell.
+
+## What implementing it changed
+
+Two things worth recording, because neither was visible from the design:
+
+- **Sheet cost is real.** Every row carries 40 KB on top of its conditions and actions, and at
+  tier 1's 2400 KB that is enough to force a choice: several of the balance-lab archetypes run one
+  tier below their v1 namesake purely to fit. That is the trade-off §5 wanted, arriving sooner than
+  expected.
+- **Deleting a hidden gate exposed a hidden assumption.** With v1's "took no damage this tick" gate
+  gone from Self Repair (§8), a heal could resurrect a virus whose Integrity had already reached 0
+  earlier in the same tick, because the death check only runs at the end of one. `tools/balance-lab`'s
+  new dominance search found it, not a person. Death is now latched at 0; RULESET.md §13 records it.

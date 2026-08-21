@@ -15,7 +15,7 @@ export function runMatchup(virus: VirusArchetype, defense: DefenseArchetype, sam
   let attackerWins = 0;
   for (let i = 0; i < sampleSize; i += 1) {
     const input: BattleInput = {
-      rulesetVersion: "v1",
+      rulesetVersion: "v2",
       seed: seedOffset + i,
       virus: virus.virus,
       defense: defense.graph,

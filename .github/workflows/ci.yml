@@ -42,6 +42,33 @@ jobs:
       - name: Build
         run: pnpm build
 
+  balance-dominance:
+    # V7.4 / ADR 0006 §10: ruleset v2 multiplies the combination space far past what five
+    # hand-written archetypes cover, so a seeded generator plays random sheets against every
+    # defense archetype and this job fails on any build that beats *everything*. Findings already
+    # recorded in tools/balance-lab/src/known-dominance.ts do not fail it — that file is the
+    # outstanding balance debt, and shrinking it is the release gate for shipping v2 to players.
+    # Its own job because the search is ~7000 battles (about a minute), not because it is optional.
+    # The `dominance` script builds its own dependencies through turbo first: balance-lab's tsc
+    # resolves @payload/sim through that package's dist/, so a job that only installs and runs
+    # would fail on a clean checkout even though it passes on a machine that has built before.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Search for dominant builds
+        run: pnpm --filter @payload/balance-lab dominance
+
   determinism-cross-platform:
     # S1.6: proves packages/sim's simulate() produces a byte-identical BattleLog (hashed —
     # test/determinism.test.ts) on a real browser engine, not just Node. Separate job from

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getSacrificeDecoyConfig, nextSacrificeDecoyThreshold, shouldArmSacrificeDecoy } from "../../src/blocks/sacrifice-decoy.js";
-import { simulate } from "../../src/engine.js";
+import { simulate } from "../../src/simulate.js";
 import type { BattleInput, DefenseGraph, DefenseNode } from "../../src/types.js";
 
 describe("getSacrificeDecoyConfig", () => {

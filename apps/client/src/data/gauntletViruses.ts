@@ -1,4 +1,4 @@
-import type { VirusDesign } from "@payload/sim";
+import type { SheetEvent, VirusProgram } from "@payload/sim";
 
 /**
  * gauntletViruses.ts — the reference attackers the Defend page throws at a player's own defense
@@ -6,92 +6,88 @@ import type { VirusDesign } from "@payload/sim";
  *
  * Why the defense has to be *simulated* rather than merely validated: validateDefenseGraph only
  * checks shape (entry/core counts, edge lengths, budget, that a path to Core exists at all). A
- * path guarded by two overlapping ICE Sentries is still a path — RULESET.md §9 records exactly
- * that composition ("ICE Nest") beating all five virus archetypes 100% of the time. The only way
- * to know a defense can be breached is to watch something breach it.
+ * path guarded by two overlapping ICE Sentries is still a path — RULESET.md §9/§13 records exactly
+ * that composition ("ICE Nest") beating everything we can throw at it, in v1 and still in v2. The
+ * only way to know a defense can be breached is to watch something breach it.
  *
- * These five mirror tools/balance-lab's own VIRUS_ARCHETYPES (RULESET.md §9's cast, all sized for
- * account tier 1) and are deliberately spread across strategies — pure aggression, pure evasion,
- * conditional, tanky — so a defense that stops all five is stopping genuinely different attacks,
- * not one attack five times. They are re-declared here rather than imported because the boundaries
- * rule (eslint.config.js) forbids an `app` importing a `tool`: balance-lab is an offline CLI over
- * fixed archetypes, this is a runtime check against a live player graph. If balance-lab's roster
- * changes, this list is worth revisiting — the numbers themselves come from @payload/sim either
- * way, so the two can't disagree about what a block *does*, only about which builds get tried.
+ * V7.5: re-authored as ruleset v2 event sheets. These five mirror tools/balance-lab's own
+ * VIRUS_ARCHETYPES (all sized for account tier 1) and are deliberately spread across strategies —
+ * pure aggression, pure evasion, conditional, tanky, pure scouting — so a defense that stops all
+ * five is stopping genuinely different attacks, not one attack five times. They are re-declared
+ * here rather than imported because the boundaries rule (eslint.config.js) forbids an `app`
+ * importing a `tool`: balance-lab is an offline CLI over fixed archetypes, this is a runtime check
+ * against a live player graph. If balance-lab's roster changes, this list is worth revisiting.
+ *
+ * A sheet here carries no `SheetEvent.id`, so the engine addresses each row by its path ("1.0")
+ * and the Defend page's rule chips can be keyed by the same walk — see logic/attackPlayback.ts.
  */
+
+function rule(partial: Partial<SheetEvent>): SheetEvent {
+  return { conditions: [], actions: [], children: [], ...partial };
+}
 
 export interface GauntletVirus {
   readonly id: string;
   readonly name: string;
   /** One line, shown to the player next to the result — why this attacker is in the line-up. */
   readonly description: string;
-  readonly virus: VirusDesign;
+  readonly virus: VirusProgram;
 }
 
 export const GAUNTLET_VIRUSES: readonly GauntletVirus[] = [
   {
     id: "brute-rush",
     name: "Brute Rush",
-    description: "Jalur terpendek, dua blok serang. Uji kekuatan mentah pertahananmu.",
+    description: "Satu aturan, jalur terpendek, dua aksi serang. Uji kekuatan mentah pertahananmu.",
     virus: {
-      movement: { kind: "shortest-path" },
-      blocks: [
-        { kind: "brute-force", tier: 1 },
-        { kind: "exploit", tier: 1 },
-      ],
+      events: [rule({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "exploit", tier: 1 }, { kind: "move-toward-core" }] })],
     },
   },
   {
     id: "ghost-crawler",
     name: "Ghost Crawler",
-    description: "Tanpa blok serang sama sekali — menyelinap, memperbaiki diri, menghindari Honeypot.",
+    description: "Tanpa aksi serang sama sekali — memutari Honeypot yang terdeteksi, lalu merayap sambil memperbaiki diri.",
     virus: {
-      movement: { kind: "backtrack" },
-      blocks: [
-        { kind: "cloak", tier: 1 },
-        { kind: "slow-crawl", tier: 1 },
-        { kind: "detect-honeypot", tier: 1 },
-        { kind: "self-repair", tier: 1 },
+      events: [
+        rule({ conditions: [{ kind: "honeypot-near", tier: 1 }], actions: [{ kind: "move-avoiding-hazards" }] }),
+        rule({ actions: [{ kind: "slow-crawl", tier: 1 }, { kind: "self-repair", tier: 1 }, { kind: "move-random" }] }),
       ],
     },
   },
   {
     id: "scanner-hunter",
     name: "Scanner Hunter",
-    description: "Exploit yang hanya menyala saat menghadapi Firewall, plus Brute Force tetap.",
+    description: "Exploit hanya saat berdiri di Firewall, Brute Force tetap jalan di bawahnya.",
     virus: {
-      movement: { kind: "shortest-path" },
-      blocks: [
-        { kind: "if-node-type", tier: 1, targetNodeTypes: ["firewall"] },
-        { kind: "exploit", tier: 1 },
-        { kind: "brute-force", tier: 1 },
+      events: [
+        rule({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["firewall"] }], actions: [{ kind: "exploit", tier: 1 }] }),
+        rule({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-toward-core" }] }),
       ],
     },
   },
   {
     id: "survivor",
     name: "Survivor",
-    description: "Tebal dan reaktif: Self Repair II + Sacrifice Decoy II, menyerang saat terdesak.",
+    description: "Tebal dan reaktif: Self Repair II + Decoy menyala di bawah 50% Integrity, menyerang terus di bawahnya.",
     virus: {
-      movement: { kind: "random-walk" },
-      blocks: [
-        { kind: "self-repair", tier: 2 },
-        { kind: "sacrifice-decoy", tier: 2 },
-        { kind: "if-integrity-below", tier: 1 },
-        { kind: "brute-force", tier: 1 },
+      events: [
+        rule({
+          conditions: [{ kind: "integrity-below", integrityThresholdPermille: 500 }],
+          actions: [{ kind: "self-repair", tier: 2 }, { kind: "arm-decoy", tier: 1 }],
+        }),
+        rule({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-random" }] }),
       ],
     },
   },
   {
     id: "ghost-scout",
     name: "Ghost Scout",
-    description: "Deteksi maksimal, tempur nol. Uji apakah pertahananmu bisa dilewati tanpa dilawan.",
+    description: "Sensor maksimal, tempur nol. Uji apakah pertahananmu bisa dilewati tanpa dilawan.",
     virus: {
-      movement: { kind: "backtrack" },
-      blocks: [
-        { kind: "scan-ahead", tier: 3 },
-        { kind: "detect-honeypot", tier: 3 },
-        { kind: "cloak", tier: 1 },
+      events: [
+        rule({ actions: [{ kind: "move-avoiding-hazards" }] }),
+        rule({ conditions: [{ kind: "honeypot-near", tier: 3 }], actions: [{ kind: "slow-crawl", tier: 1 }] }),
+        rule({ conditions: [{ kind: "trap-near", tier: 2 }], actions: [{ kind: "slow-crawl", tier: 1 }] }),
       ],
     },
   },

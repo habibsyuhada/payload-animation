@@ -1,5 +1,7 @@
 import { EDGE_LENGTH_MIN_DU, getAccountTierConfig, getDefenseNodeCost, RULESET_V1, type BlockTier, type DefenseNodeType } from "@payload/sim";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { persistStorage, storageKey } from "./localPersist.js";
 
 /**
  * defendStore — state for the full-screen Defend page (screens/Defend.tsx).
@@ -9,6 +11,9 @@ import { create } from "zustand";
  * viewBox ratio like Defense Grid's) is what keeps node silhouettes from stretching on any
  * screen shape — a phone in portrait renders the exact same circle a desktop does, just less
  * of the world around it.
+ *
+ * The node layout is persisted to the device (localPersist.ts); the camera is not, on purpose —
+ * see the persist options at the bottom of this file.
  */
 
 export interface DefendNode {
@@ -193,88 +198,117 @@ function freeSpotNear(nodes: readonly DefendNode[], x: number, y: number): { x: 
 
 let nextNodeId = FIRST_PLACEABLE_ID;
 
-export const useDefendStore = create<DefendState>((set) => ({
-  nodes: INITIAL_NODES,
-  zoom: 1,
-  offsetX: 0,
-  offsetY: 0,
-  selectedNodeId: null,
-  detailNodeId: null,
+/** See localPersist.ts: a restored layout's node ids must not be handed out a second time. */
+function adoptRestoredIds(nodes: readonly DefendNode[]): void {
+  nextNodeId = Math.max(nextNodeId, ...nodes.map((node) => node.id + 1));
+}
 
-  selectNode: (id) => set({ selectedNodeId: id }),
-  clearSelection: () => set({ selectedNodeId: null }),
-  openDetail: (id) => set({ detailNodeId: id }),
-  closeDetail: () => set({ detailNodeId: null }),
+export const useDefendStore = create<DefendState>()(
+  persist(
+    (set) => ({
+      nodes: INITIAL_NODES,
+      zoom: 1,
+      offsetX: 0,
+      offsetY: 0,
+      selectedNodeId: null,
+      detailNodeId: null,
 
-  /** Refuses outright when the budget can't cover it, rather than letting the player overspend and
-   * then telling them off — the picker already disables what they can't afford, so reaching here
-   * broke means something else got out of step. */
-  addNode: (type, x, y, tier) => {
-    set((state) => {
-      if (nodeCostPt({ type, ...(tier !== undefined ? { tier } : {}) }) > remainingPt(state.nodes)) {
-        return state;
-      }
-      const id = nextNodeId;
-      nextNodeId += 1;
-      const spot = freeSpotNear(state.nodes, x, y);
-      return { nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x: spot.x, y: spot.y }], selectedNodeId: id };
-    });
-  },
+      selectNode: (id) => set({ selectedNodeId: id }),
+      clearSelection: () => set({ selectedNodeId: null }),
+      openDetail: (id) => set({ detailNodeId: id }),
+      closeDetail: () => set({ detailNodeId: null }),
 
-  moveNode: (id, x, y) => set((state) => ({ nodes: state.nodes.map((node) => (node.id === id ? { ...node, x, y } : node)) })),
+      /** Refuses outright when the budget can't cover it, rather than letting the player overspend and
+       * then telling them off — the picker already disables what they can't afford, so reaching here
+       * broke means something else got out of step. */
+      addNode: (type, x, y, tier) => {
+        set((state) => {
+          if (nodeCostPt({ type, ...(tier !== undefined ? { tier } : {}) }) > remainingPt(state.nodes)) {
+            return state;
+          }
+          const id = nextNodeId;
+          nextNodeId += 1;
+          const spot = freeSpotNear(state.nodes, x, y);
+          return { nodes: [...state.nodes, { id, type, ...(tier !== undefined ? { tier } : {}), x: spot.x, y: spot.y }], selectedNodeId: id };
+        });
+      },
 
-  removeNode: (id) =>
-    set((state) => {
-      const node = state.nodes.find((candidate) => candidate.id === id);
-      if (!node || !isRemovable(node, state.nodes)) {
-        return state;
-      }
-      return {
-        nodes: state.nodes.filter((candidate) => candidate.id !== id),
-        selectedNodeId: state.selectedNodeId === id ? null : state.selectedNodeId,
-        detailNodeId: state.detailNodeId === id ? null : state.detailNodeId,
-      };
+      moveNode: (id, x, y) => set((state) => ({ nodes: state.nodes.map((node) => (node.id === id ? { ...node, x, y } : node)) })),
+
+      removeNode: (id) =>
+        set((state) => {
+          const node = state.nodes.find((candidate) => candidate.id === id);
+          if (!node || !isRemovable(node, state.nodes)) {
+            return state;
+          }
+          return {
+            nodes: state.nodes.filter((candidate) => candidate.id !== id),
+            selectedNodeId: state.selectedNodeId === id ? null : state.selectedNodeId,
+            detailNodeId: state.detailNodeId === id ? null : state.detailNodeId,
+          };
+        }),
+
+      panBy: (screenDx, screenDy) => set((state) => ({ offsetX: state.offsetX + screenDx, offsetY: state.offsetY + screenDy })),
+
+      /** Multiplies zoom by `factor` while pinning the world point currently under (screenX, screenY)
+       * to that same screen pixel — what makes a pinch feel like it's stretching the map itself
+       * rather than the camera jumping to the middle of it. */
+      zoomAtPoint: (factor, screenX, screenY) =>
+        set((state) => {
+          const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, state.zoom * factor));
+          const applied = zoom / state.zoom;
+          return {
+            zoom,
+            offsetX: screenX - (screenX - state.offsetX) * applied,
+            offsetY: screenY - (screenY - state.offsetY) * applied,
+          };
+        }),
+
+      /** Frames `bounds` in a canvas of the given pixel size: the widest zoom that still fits it with
+       * padding (never magnifying past 1:1), centered. What makes the page open with both nodes in
+       * view on a narrow phone instead of the Core sitting half off the right edge. */
+      fitToBounds: (bounds, canvasWidth, canvasHeight) =>
+        set(() => {
+          const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+          const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+          const fitZoom = Math.min((canvasWidth - FIT_PADDING_PX * 2) / contentWidth, (canvasHeight - FIT_PADDING_PX * 2) / contentHeight, 1);
+          const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitZoom));
+          return {
+            zoom,
+            offsetX: canvasWidth / 2 - ((bounds.minX + bounds.maxX) / 2) * zoom,
+            offsetY: canvasHeight / 2 - ((bounds.minY + bounds.maxY) / 2) * zoom,
+          };
+        }),
+
+      /** Slides the camera (zoom untouched) until `worldX/worldY` sits in the middle of the canvas —
+       * how an off-screen node's direction marker brings that node back into view. */
+      centerOnWorldPoint: (worldX, worldY, canvasWidth, canvasHeight) =>
+        set((state) => ({ offsetX: canvasWidth / 2 - worldX * state.zoom, offsetY: canvasHeight / 2 - worldY * state.zoom })),
+
+      reset: () => {
+        nextNodeId = FIRST_PLACEABLE_ID;
+        set({ nodes: INITIAL_NODES, zoom: 1, offsetX: 0, offsetY: 0, selectedNodeId: null, detailNodeId: null });
+      },
     }),
-
-  panBy: (screenDx, screenDy) => set((state) => ({ offsetX: state.offsetX + screenDx, offsetY: state.offsetY + screenDy })),
-
-  /** Multiplies zoom by `factor` while pinning the world point currently under (screenX, screenY)
-   * to that same screen pixel — what makes a pinch feel like it's stretching the map itself
-   * rather than the camera jumping to the middle of it. */
-  zoomAtPoint: (factor, screenX, screenY) =>
-    set((state) => {
-      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, state.zoom * factor));
-      const applied = zoom / state.zoom;
-      return {
-        zoom,
-        offsetX: screenX - (screenX - state.offsetX) * applied,
-        offsetY: screenY - (screenY - state.offsetY) * applied,
-      };
-    }),
-
-  /** Frames `bounds` in a canvas of the given pixel size: the widest zoom that still fits it with
-   * padding (never magnifying past 1:1), centered. What makes the page open with both nodes in
-   * view on a narrow phone instead of the Core sitting half off the right edge. */
-  fitToBounds: (bounds, canvasWidth, canvasHeight) =>
-    set(() => {
-      const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
-      const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
-      const fitZoom = Math.min((canvasWidth - FIT_PADDING_PX * 2) / contentWidth, (canvasHeight - FIT_PADDING_PX * 2) / contentHeight, 1);
-      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitZoom));
-      return {
-        zoom,
-        offsetX: canvasWidth / 2 - ((bounds.minX + bounds.maxX) / 2) * zoom,
-        offsetY: canvasHeight / 2 - ((bounds.minY + bounds.maxY) / 2) * zoom,
-      };
-    }),
-
-  /** Slides the camera (zoom untouched) until `worldX/worldY` sits in the middle of the canvas —
-   * how an off-screen node's direction marker brings that node back into view. */
-  centerOnWorldPoint: (worldX, worldY, canvasWidth, canvasHeight) =>
-    set((state) => ({ offsetX: canvasWidth / 2 - worldX * state.zoom, offsetY: canvasHeight / 2 - worldY * state.zoom })),
-
-  reset: () => {
-    nextNodeId = FIRST_PLACEABLE_ID;
-    set({ nodes: INITIAL_NODES, zoom: 1, offsetX: 0, offsetY: 0, selectedNodeId: null, detailNodeId: null });
-  },
-}));
+    {
+      name: storageKey("defend"),
+      version: 1,
+      storage: persistStorage,
+      /** Same as the Virus Lab's: a layout we cannot read degrades to the starting pair rather
+       * than crashing the editor. A real conversion replaces this the first time the shape moves. */
+      migrate: () => ({ nodes: INITIAL_NODES }),
+      /**
+       * The layout only. Camera and selection are deliberately left out: the page frames the
+       * whole graph on its first layout (see Defend.tsx's fit effect), so a restored zoom/pan
+       * would fight that and could open on empty space beside the layout the player saved.
+       * Reopening to "here is your defense, all of it" is the better default.
+       */
+      partialize: (state) => ({ nodes: state.nodes }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          adoptRestoredIds(state.nodes);
+        }
+      },
+    },
+  ),
+);
