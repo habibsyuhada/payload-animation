@@ -94,7 +94,7 @@ export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
  * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
  * at the bottom must not overwrite the reaction above it.
  */
-export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate";
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate" | "checkpoint";
 
 export interface ActionSpec {
   readonly kind: ActionKind;
@@ -129,6 +129,11 @@ export const ACTION_SPECS_V2: readonly ActionSpec[] = [
   // Integrity as one-shot damage to the Breach Node it occupies, then dies — a slot (not
   // cumulative) since detonating twice in one tick is meaningless, the body is only ever "gone" once.
   { kind: "detonate", category: "attack", weightKbByTier: { 1: 900, 2: 1100, 3: 1300 }, slot: "detonate" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3d): records the node this body is standing on
+  // as its respawn point. A slot — re-setting mid-tick from two rules would be ambiguous about
+  // which node "wins", same first-writer-wins rule as everything else (ADR 0006 §3); re-setting on
+  // a LATER tick simply overwrites the previous checkpoint, no `once` needed.
+  { kind: "set-checkpoint", category: "utility", weightKbByTier: { 1: 600, 2: 750, 3: 900 }, slot: "checkpoint" },
 ];
 
 export function getConditionSpec(kind: ConditionKind): ConditionSpec {
@@ -283,6 +288,24 @@ const DETONATE_CONFIG_V2: Readonly<Record<BlockTier, DetonateConfigV2>> = {
 
 export function getDetonateConfigV2(tier: BlockTier): DetonateConfigV2 {
   return DETONATE_CONFIG_V2[tier];
+}
+
+interface CheckpointConfigV2 {
+  /** Absolute Integrity (not ‰ — RULESET.md §14 states these as flat numbers) a body wakes up with. */
+  readonly respawnIntegrity: number;
+  /** Total respawns this body may use for the rest of the battle. Re-setting the checkpoint at a
+   * different tier overwrites this with the NEW tier's total — it does not add to it. */
+  readonly respawnsTotal: number;
+}
+
+const CHECKPOINT_CONFIG_V2: Readonly<Record<BlockTier, CheckpointConfigV2>> = {
+  1: { respawnIntegrity: 300, respawnsTotal: 1 },
+  2: { respawnIntegrity: 400, respawnsTotal: 1 },
+  3: { respawnIntegrity: 500, respawnsTotal: 2 },
+};
+
+export function getCheckpointConfigV2(tier: BlockTier): CheckpointConfigV2 {
+  return CHECKPOINT_CONFIG_V2[tier];
 }
 
 /** Default threshold for "integrity-below" when a row doesn't carry one (matches v1's tier I). */

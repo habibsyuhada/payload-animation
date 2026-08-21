@@ -168,6 +168,16 @@ export const ACTION_CATALOG: readonly ActionCatalogEntry[] = [
     2: "2 tubuh, masing-masing 60% sisa Integrity.",
     3: "Sampai 3 tubuh, masing-masing 65% sisa Integrity.",
   }),
+  tiered("detonate", "Detonasi", "Mengorbankan seluruh sisa Integrity sebagai damage ke Breach Node yang diduduki, lalu mati.", "attack", {
+    1: "Damage = 200% sisa Integrity.",
+    2: "Damage = 250% sisa Integrity.",
+    3: "Damage = 300% sisa Integrity.",
+  }),
+  tiered("set-checkpoint", "Pasang Checkpoint", "Merekam node saat ini. Saat mati, hidup lagi di sana.", "utility", {
+    1: "300 Integrity, 1 jatah respawn.",
+    2: "400 Integrity, 1 jatah respawn.",
+    3: "500 Integrity, 2 jatah respawn.",
+  }),
 ];
 
 export function findConditionEntry(kind: ConditionKind): ConditionCatalogEntry {

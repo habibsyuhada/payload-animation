@@ -226,7 +226,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.3c** Aksi `worm-split` + `detonate`: cabang mewarisi salinan `firedOnceKeys` &
       `decoy.activationsUsed`, `triggeredHoneypotIds` tetap global — test menang/kalah multi-entitas,
       test dua cabang identik menyimpang di `move-random`.
-- [ ] **8.3d** Aksi `set-checkpoint`: respawn mengonsumsi `died` (bukan memintasnya), invariant
+- [x] **8.3d** Aksi `set-checkpoint`: respawn mengonsumsi `died` (bukan memintasnya), invariant
       "integrity naik dari 0 hanya lewat `virus-respawned`" — `engine-v2.test.ts:285` (Self Repair
       tidak membangkitkan) lulus tanpa diedit; hash tetap.
 - [ ] **8.3e** Replay & klien multi-track: `compile.ts` (id track `"virus"` untuk entitas 0,

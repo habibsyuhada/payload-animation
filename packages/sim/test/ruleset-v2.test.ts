@@ -53,6 +53,7 @@ const ALL_ACTION_KINDS: readonly ActionKind[] = [
   "arm-decoy",
   "worm-split",
   "detonate",
+  "set-checkpoint",
 ];
 
 const TIERS: readonly BlockTier[] = [1, 2, 3];

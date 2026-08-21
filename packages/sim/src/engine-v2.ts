@@ -27,6 +27,7 @@ import {
   VIRUS_START_INTEGRITY,
   getActionSpec,
   getBruteForceDamagePerTickV2,
+  getCheckpointConfigV2,
   getCloakConfigV2,
   getConditionRadiusHops,
   getConditionSpec,
@@ -85,13 +86,19 @@ import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, Defe
  *    triggers (per entity) → Scanner aura (per entity) → Patch Server heal, LAST and
  *    entity-independent (it heals nodes, not bodies), so this tick's damage is still visible before
  *    any of it gets healed back.
- * 5. **Utility** — per entity: Self Repair, decoy arming.
+ * 5. **Utility** — per entity: Self Repair, decoy arming, `set-checkpoint` (PLAN.md 8.3d, only while
+ *    standing on a node and still alive — a body already dead this tick can't mark one).
  * 6. **Movement** — per entity, ascending id; move-random draws here. The winning intent is
  *    consumed at the END of the tick, so a body that arrives somewhere always gets one full tick
  *    of acting there before it can leave. Tarpit/Turnstile apply here.
  * H. **`worm-split` resolution** (PLAN.md 8.3c) — per entity, AFTER movement, so a new body never
  *    acts on the tick it's born. Appended with a fresh, monotonically increasing id; never spliced
  *    in. Refused below `WORM_SPLIT_MIN_INTEGRITY_V2` Integrity or at the tier's living-entity cap.
+ * I. **Checkpoint respawn** (PLAN.md 8.3d) — per entity, reading `entity.died` LIVE (the one phase
+ *    that deliberately reacts to a death from anywhere earlier this same tick, rather than working
+ *    from a tick-start snapshot of it). A dead body with an armed checkpoint, respawns remaining,
+ *    and no `noRespawn` (`detonate`) comes back here: `virus-died` → `virus-respawned` →
+ *    `virus-entered-node`, in that order, at the checkpoint node.
  * 7. **`rule-fired`** — per entity ascending id (the tick-start snapshot — a body born this tick via
  *    H does not appear here until next tick), then that entity's own fired rule ids sorted — for
  *    every rule whose actions actually did something, then win/loss.
@@ -130,6 +137,8 @@ interface TickPlan {
   split: SlotWrite<BlockTier> | null;
   /** Written by `detonate`; resolved in node effects (phase 4a) before the regular occupancy attack. */
   detonate: SlotWrite<BlockTier> | null;
+  /** Written by `set-checkpoint`; resolved in utility (phase 5, PLAN.md 8.3d), alongside Self Repair. */
+  checkpoint: SlotWrite<BlockTier> | null;
   readonly bruteForce: Contribution[];
   readonly exploit: Contribution[];
   readonly overload: OverloadContribution[];
@@ -138,7 +147,7 @@ interface TickPlan {
 }
 
 function emptyPlan(): TickPlan {
-  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, detonate: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
+  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, detonate: null, checkpoint: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
 }
 
 interface DecoyState {
@@ -178,8 +187,18 @@ interface VirusEntity {
   scannedAccuracyBonusPermille: number;
   honeypotPendingDeathTick: number | null;
   /** Set by `detonate` (PLAN.md 8.3c): this body's death is a deliberate sacrifice, so `set-checkpoint`
-   * (8.3d) must never bring it back. Plumbing ahead of 8.3d — nothing reads it yet. */
+   * respawn (8.3d) must never bring it back. */
   noRespawn: boolean;
+  /** `set-checkpoint`'s recorded node, or null if none is armed (never set, or already consumed by
+   * a respawn — PLAN.md 8.3d). Re-setting overwrites both this and the two fields below with the
+   * NEW tier's config; it does not stack with whatever was recorded before. */
+  checkpointNodeId: number | null;
+  /** Absolute Integrity this body wakes up with, from the tier of whichever `set-checkpoint` last fired. */
+  respawnIntegrity: number;
+  /** Total respawns this body may use for the rest of the battle, from that same tier. */
+  respawnsTotal: number;
+  /** Never decreases, never reset by re-setting the checkpoint — a whole-battle budget. */
+  respawnsUsed: number;
 }
 
 interface BattleStateV2 {
@@ -410,6 +429,10 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
     plan.detonate = writeSlot(plan.detonate, ruleId, tier);
     return;
   }
+  if (spec.slot === "checkpoint") {
+    plan.checkpoint = writeSlot(plan.checkpoint, ruleId, tier);
+    return;
+  }
   if (kind === "brute-force") {
     plan.bruteForce.push({ ruleId, amount: getBruteForceDamagePerTickV2(tier) });
   } else if (kind === "exploit") {
@@ -552,6 +575,10 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     scannedAccuracyBonusPermille: 0,
     honeypotPendingDeathTick: null,
     noRespawn: false,
+    checkpointNodeId: null,
+    respawnIntegrity: 0,
+    respawnsTotal: 0,
+    respawnsUsed: 0,
   };
   /** Append-only, ascending, never reused (PLAN.md 8.3a: entities are never spliced). */
   let nextEntityId = 1;
@@ -1003,6 +1030,14 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           events.push({ tick, type: "status-applied", actor: "sacrifice-decoy", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
         }
       }
+      if (plan.checkpoint && !entity.died && entity.location.kind === "node") {
+        const config = getCheckpointConfigV2(plan.checkpoint.value);
+        entity.checkpointNodeId = entity.location.nodeId;
+        entity.respawnIntegrity = config.respawnIntegrity;
+        entity.respawnsTotal = config.respawnsTotal;
+        w.firedRuleIds.add(plan.checkpoint.ruleId);
+        events.push({ tick, type: "status-applied", actor: "set-checkpoint", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+      }
     }
 
     // --- 6. Movement, per entity (ascending id) ---
@@ -1098,11 +1133,45 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         scannedAccuracyBonusPermille: 0,
         honeypotPendingDeathTick: null,
         noRespawn: false,
+        // A checkpoint is a place THIS body marked, not program memory — a fresh body hasn't
+        // marked anything itself, so it starts with none (same "physical, not carried over" bucket
+        // as cloak/scan status above), even if the parent had one armed.
+        checkpointNodeId: null,
+        respawnIntegrity: 0,
+        respawnsTotal: 0,
+        respawnsUsed: 0,
       };
       state.entities.push(clone);
       w.firedRuleIds.add(plan.split.ruleId);
       events.push({ tick, type: "virus-split", actor: String(entity.id), target: String(clone.id), ...(canSplit ? { entityId: entity.id } : {}) });
       nextEntityId += 1;
+    }
+
+    // --- I. Checkpoint respawn, per entity (work's own ascending-id order) — PLAN.md 8.3d. Consumes
+    // `died` as its trigger rather than avoiding it: a body reaching here IS dead (checked live —
+    // deliberately the one phase allowed to react to a death from anywhere earlier THIS tick), and
+    // respawning is the explicit transition out of that, never a silent bypass of the death latch
+    // above. RULESET.md §13's invariant: Integrity only ever rises from 0 via the `virus-died` →
+    // `virus-respawned` → `virus-entered-node` triple below — no other code path may do it. A body
+    // that dies without an armed checkpoint, with `noRespawn` set (`detonate`, PLAN.md 8.3c), or out
+    // of respawns stays dead here exactly as it did before this phase existed. ---
+    for (const w of work) {
+      const { entity } = w;
+      if (!entity.died || entity.noRespawn || entity.checkpointNodeId === null || entity.respawnsUsed >= entity.respawnsTotal) {
+        continue;
+      }
+      events.push({ tick, type: "virus-died", actor: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
+      const respawnNodeId = entity.checkpointNodeId;
+      entity.died = false;
+      entity.integrity = entity.respawnIntegrity;
+      entity.location = { kind: "node", nodeId: respawnNodeId };
+      entity.respawnsUsed += 1;
+      entity.freshArrival = true;
+      entity.previousNodeId = null;
+      entity.queuedMovement = null;
+      entity.checkpointNodeId = null; // Consumed — another set-checkpoint is needed to arm a next one.
+      events.push({ tick, type: "virus-respawned", actor: "virus", target: String(respawnNodeId), delta: entity.integrity, ...(canSplit ? { entityId: entity.id } : {}) });
+      events.push({ tick, type: "virus-entered-node", actor: "virus", target: String(respawnNodeId), ...(canSplit ? { entityId: entity.id } : {}) });
     }
 
     // --- 7. rule-fired (entity ascending id, then that entity's own fired rule ids sorted), then win/loss ---

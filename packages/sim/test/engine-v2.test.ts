@@ -362,6 +362,72 @@ describe("determinism", () => {
   });
 });
 
+describe("set-checkpoint & respawn (8.3d)", () => {
+  it("respawns exactly once at the checkpoint node, with virus-died -> virus-respawned -> virus-entered-node, then stays permanently dead once the charge is spent", () => {
+    const log = battle(
+      [row({ once: "battle", actions: [{ kind: "set-checkpoint", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })],
+      HARD_FIREWALL_LINE,
+      7,
+    );
+    expect(log.result.winner).toBe("defender");
+    const respawn = log.events.find((event) => event.type === "virus-respawned")!;
+    expect(respawn).toBeDefined();
+    expect(respawn.target).toBe("1"); // the Entry it set the checkpoint at.
+    expect(respawn.delta).toBe(300); // tier I's flat respawn Integrity.
+    // Exactly the triple, all at the same tick, in that order (other events that tick — the
+    // Firewall's own counter-damage — happen earlier, in node effects, not part of this sequence).
+    const respawnSequence = log.events.filter((event) => event.tick === respawn.tick && (event.type === "virus-died" || event.type === "virus-respawned" || event.type === "virus-entered-node"));
+    expect(respawnSequence.map((event) => event.type)).toEqual(["virus-died", "virus-respawned", "virus-entered-node"]);
+    // Only one respawn ever happens (tier I grants exactly 1) — the second death is final.
+    expect(log.events.filter((event) => event.type === "virus-respawned")).toHaveLength(1);
+    const deaths = log.events.filter((event) => event.type === "virus-died");
+    expect(deaths).toHaveLength(2);
+    expect(deaths[1]!.tick).toBeGreaterThan(respawn.tick);
+    // The final death is the very last event before the battle-ending result — no further respawn.
+    expect(log.events[log.events.length - 1]).toBe(deaths[1]);
+  });
+
+  it("never brings back a body that died to its own detonate (RULESET.md §14: no respawn for detonate deaths)", () => {
+    const log = battle([
+      row({ once: "battle", conditions: [{ kind: "at-node" }], actions: [{ kind: "set-checkpoint", tier: 3 }] }),
+      row({ once: "battle", conditions: [{ kind: "on-breach-node" }], actions: [{ kind: "detonate", tier: 1 }] }),
+      row({ actions: [{ kind: "move-toward-core" }] }),
+    ]);
+    expect(log.result.winner).toBe("defender");
+    expect(log.events.some((event) => event.type === "virus-respawned")).toBe(false);
+    // A checkpoint WAS armed (proves the lack of respawn is `noRespawn`, not "never had a checkpoint").
+    expect(log.events.some((event) => event.type === "status-applied" && event.actor === "set-checkpoint")).toBe(true);
+    expect(log.events.filter((event) => event.type === "virus-died")).toHaveLength(1);
+  });
+
+  it("does not carry a checkpoint into a new split body — only the entity that armed it respawns", () => {
+    const log = battle(
+      [
+        row({ once: "battle", conditions: [{ kind: "at-node" }], actions: [{ kind: "set-checkpoint", tier: 1 }] }),
+        row({ once: "battle", conditions: [{ kind: "on-breach-node" }], actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }),
+        row({ actions: [{ kind: "move-toward-core" }] }),
+      ],
+      // Firewall III's counter-damage (45/tick) kills a split body (500 Integrity, ~11 ticks)
+      // long before two bodies' doubled passive drain could destroy the Firewall itself (40 ticks)
+      // — so both stay pinned there long enough to die, rather than breaking through together.
+      HARD_FIREWALL_LINE,
+      7,
+    );
+    // Entity 0 armed its checkpoint at the Entry BEFORE splitting at the Firewall; the clone (entity
+    // 1) is born after that and gets no checkpoint of its own (PLAN.md 8.3d) — the two bodies are
+    // pinned on the same Firewall with identical Integrity, so they die on the exact same tick.
+    const respawn = log.events.find((event) => event.type === "virus-respawned")!;
+    expect(respawn).toBeDefined();
+    expect(respawn.entityId).toBe(0);
+    expect(log.events.filter((event) => event.type === "virus-respawned")).toHaveLength(1);
+    // Entity 1 never respawns and never acts again after the shared death tick.
+    const entity1LastDamage = Math.max(...log.events.filter((event) => event.type === "virus-damaged" && event.entityId === 1).map((event) => event.tick));
+    expect(log.events.some((event) => event.entityId === 1 && event.tick > entity1LastDamage)).toBe(false);
+    // Entity 0, on the other hand, keeps generating events well after that same tick.
+    expect(log.events.some((event) => event.entityId === 0 && event.tick > entity1LastDamage)).toBe(true);
+  });
+});
+
 describe("caps", () => {
   it("parks a sheet with no movement action until the battle times out", () => {
     const log = battle([row({ actions: [{ kind: "brute-force", tier: 3 }] })]);

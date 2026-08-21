@@ -92,7 +92,8 @@ export type ActionKind =
   | "arm-decoy"
   // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c/8.3d).
   | "worm-split"
-  | "detonate";
+  | "detonate"
+  | "set-checkpoint";
 
 /**
  * How often an event may fire.
@@ -202,7 +203,20 @@ export type BattleEventType =
   | "virus-departed-node"
   | "virus-damaged"
   | "virus-repaired"
+  /**
+   * Two roles (PLAN.md 8.3d): the BATTLE-ending death — no entity survives, `actor: "virus"`, never
+   * `entityId` — is still pushed exactly once, by `finalize()`, at the very end of the log. A body
+   * that dies WITH a `set-checkpoint` charge and respawns instead pushes this same type first (its
+   * own individual death, carrying `entityId` under the same `sheetCanSplit()` gate as everything
+   * else) immediately followed by `virus-respawned` — "it died, then it came back" is the readable
+   * story the log tells, never a silent jump from 0 Integrity to positive.
+   */
   | "virus-died"
+  /** v2 only (PLAN.md 8.3d): a body just consumed a `set-checkpoint` charge to come back from 0
+   * Integrity — always preceded, same tick, by that body's own `virus-died`. `target` is the
+   * checkpoint node's id, `delta` the Integrity it woke up with. The ONLY event type allowed to
+   * mark Integrity rising from 0 (RULESET.md §13's invariant) — no other code path may do it. */
+  | "virus-respawned"
   | "node-damaged"
   | "node-destroyed"
   /** v2 only (RULESET.md §14, ADR 0007 §A): Patch Server healing a Breach Node — deliberately its
@@ -231,8 +245,11 @@ export interface BattleEvent {
   /**
    * v2 multi-entity only (ADR 0008, PLAN.md 8.3b): which VirusEntity this event is about, when it
    * is about one body specifically (movement, damage/heal to that body, its own rule-fired, its
-   * own status changes) — absent for defense-side and battle-level events (node-repaired by a
-   * Patch Server, battle-won/battle-timeout/virus-died, an Alarm's network-wide status-applied).
+   * own status changes, its own death-then-respawn) — absent for defense-side and battle-level
+   * events (node-repaired by a Patch Server, battle-won/battle-timeout, the BATTLE-ending
+   * `virus-died` pushed once by `finalize()`, an Alarm's network-wide status-applied). A body's own
+   * `virus-died` (the one immediately followed by `virus-respawned`, PLAN.md 8.3d) is entity-specific
+   * and follows the same gate as everything else here — see that type's own doc for the distinction.
    *
    * ABSENT (not 0) for every battle whose sheet contains no `worm-split` action — decided once,
    * before tick 0, by `sheetCanSplit()`, so a log's event shape never depends on whether a split
