@@ -80,6 +80,23 @@ describe("validateVirusProgram", () => {
     expect(validateVirusProgram(bad, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-threshold");
   });
 
+  it("rejects 8.4's new condition/action parameters outside their stated ranges", () => {
+    const badHops: VirusProgram = { events: [row({ conditions: [{ kind: "core-within-hops", hops: 9 }] })] };
+    expect(validateVirusProgram(badHops, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const tooFrequent: VirusProgram = { events: [row({ conditions: [{ kind: "every-n-ticks", ticks: 2 }] })] };
+    expect(validateVirusProgram(tooFrequent, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badFlagIndex: VirusProgram = { events: [row({ conditions: [{ kind: "flag-is", flagIndex: 7 }] })] };
+    expect(validateVirusProgram(badFlagIndex, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badCount: VirusProgram = { events: [row({ conditions: [{ kind: "entity-count-below", count: 9 }] })] };
+    expect(validateVirusProgram(badCount, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+
+    const badActionFlagIndex: VirusProgram = { events: [row({ actions: [{ kind: "self-repair", tier: 1, flagIndex: 7 }] })] };
+    expect(validateVirusProgram(badActionFlagIndex, RULESET_V2, 1).errors.map((error) => error.code)).toContain("invalid-parameter");
+  });
+
   it("warns — but does not block — a sheet that never moves (ADR 0006's beginner trap)", () => {
     const parked: VirusProgram = { events: [row({ actions: [{ kind: "brute-force", tier: 1 }] })] };
     const result = validateVirusProgram(parked, RULESET_V2, 1);

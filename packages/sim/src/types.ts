@@ -71,7 +71,48 @@ export type ConditionKind =
   /** The virus is occupying a Breach Node (Firewall/Core) — Self Repair's other v1 hidden gate. */
   | "on-breach-node"
   /** The virus is standing on a node rather than crossing an edge. */
-  | "at-node";
+  | "at-node"
+  // v2-only, PLAN.md 8.4 — sensors (tiered, like honeypot-near/trap-near).
+  /** A live ICE Sentry, off its fire cooldown right now, within radius. */
+  | "ice-near"
+  /** A live Scanner within radius. */
+  | "scanner-near"
+  // v2-only, PLAN.md 8.4 — position & network (flat).
+  /** Core is within `hops` hops of the current node (or the node this edge leads to, mid-transit). */
+  | "core-within-hops"
+  /** Core's remaining HP is below `thresholdPermille` (default 500) of its starting HP. */
+  | "core-hp-below"
+  /** The occupied Breach Node's remaining HP is below `thresholdPermille` (default 500) —
+   * always false when not standing on a live Firewall or Core. */
+  | "node-hp-below"
+  /** The node ahead (see "node-ahead-is") is a live Breach Node. */
+  | "blocked-ahead"
+  /** This body has departed the current node on some EARLIER, separate visit — false for the
+   * dwell it's currently on, even after many ticks there (RULESET.md §14). */
+  | "visited-here-before"
+  // v2-only, PLAN.md 8.4 — self status (flat).
+  /** Cloak is neither active nor cooling down. */
+  | "cloak-ready"
+  /** Decoy still has an unspent absorb charge. */
+  | "decoy-armed"
+  /** A Tarpit's speed penalty is currently active at this body's position. */
+  | "slowed"
+  /** A Jammer is currently blinding this body's own sensors. */
+  | "jammed"
+  /** The network-wide Alarm alert is active right now. */
+  | "alarm-active"
+  // v2-only, PLAN.md 8.4 — time (flat).
+  /** The current tick is at or past `ticks`. */
+  | "tick-after"
+  /** The current tick is an exact multiple of `ticks` (minimum 5). */
+  | "every-n-ticks"
+  // v2-only, PLAN.md 8.4 — variables & multi-entity (flat).
+  /** Flag `flagIndex` (0-3) is currently on, per this body's own `set-flag` history. */
+  | "flag-is"
+  /** This body was born from a `worm-split`, not the battle's original entity (id 0). */
+  | "is-clone"
+  /** Fewer than `count` bodies are currently alive. */
+  | "entity-count-below";
 
 export type ActionKind =
   // Movement — all four write the same movement slot (first writer this tick wins).
@@ -111,14 +152,30 @@ export interface SheetCondition {
   readonly targetNodeTypes?: readonly DefenseNodeType[];
   /** "integrity-below" only — permille of starting Integrity. Defaults to 500. */
   readonly integrityThresholdPermille?: number;
-  /** "honeypot-near" / "trap-near" only — detection radius tier. Defaults to 1. */
+  /** "honeypot-near" / "trap-near" / "ice-near" / "scanner-near" only — detection radius tier. Defaults to 1. */
   readonly tier?: BlockTier;
+  /** "core-within-hops" only — 1-5. Defaults to 3. */
+  readonly hops?: number;
+  /** "core-hp-below" / "node-hp-below" only — permille of the target's max HP. Defaults to 500. */
+  readonly thresholdPermille?: number;
+  /** "tick-after" / "every-n-ticks" only. "every-n-ticks" enforces a minimum of 5. Defaults to 100. */
+  readonly ticks?: number;
+  /** "flag-is" only — 0-3. Defaults to 0. */
+  readonly flagIndex?: number;
+  /** "entity-count-below" only — 2-3. Defaults to 2. */
+  readonly count?: number;
 }
 
 export interface SheetAction {
   readonly kind: ActionKind;
   /** Tiered actions only (attack/stealth/utility). Defaults to 1. */
   readonly tier?: BlockTier;
+  /** "move-toward-node-type" only — which node types count as the target. Defaults to ["firewall"]. */
+  readonly targetNodeTypes?: readonly DefenseNodeType[];
+  /** "set-flag" only — 0-3. Defaults to 0. */
+  readonly flagIndex?: number;
+  /** "set-flag" only — the value to set that flag to. Defaults to true. */
+  readonly flagValue?: boolean;
 }
 
 export interface SheetEvent {

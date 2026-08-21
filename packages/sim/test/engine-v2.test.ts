@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCloakConfigV2 } from "../src/ruleset-v2.js";
+import { getCloakConfigV2, MIN_EVERY_N_TICKS_V2 } from "../src/ruleset-v2.js";
 import { simulate } from "../src/simulate.js";
 import type { BattleEvent, BattleInputV2, BattleLog, DefenseGraph, DefenseNode, SheetEvent } from "../src/types.js";
 
@@ -116,6 +116,57 @@ const SPLIT_THEN_HONEYPOT: DefenseGraph = {
   ],
   entryNodeIds: [1],
   coreNodeId: 4,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Router 2, with an ICE Sentry 3 and a Scanner 4 both one hop off the router -> Core 5. */
+const ICE_SCANNER_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "ice-sentry", 1), node(4, "scanner", 1), node(5, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 100 },
+    { from: 2, to: 4, lengthDu: 100 },
+    { from: 2, to: 5, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 5,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Router 2 -> Tarpit 3 -> Core 4. */
+const TARPIT_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "tarpit", 1), node(4, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 3, to: 4, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 4,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Jammer 2 -> Core 3. */
+const JAMMER_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "jammer", 1), node(3, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 3,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Alarm Relay 2 -> Core 3. */
+const ALARM_GRAPH: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "alarm", 1), node(3, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 3,
   coreHp: 400,
 };
 
@@ -581,5 +632,153 @@ describe("worm-split (8.3c)", () => {
       log.events.find((event) => event.type === "virus-entered-node" && event.entityId === entityId && event.tick > 0)?.target;
     expect(firstMoveTarget(0)).toBe("2");
     expect(firstMoveTarget(1)).toBe("3");
+  });
+});
+
+describe("new conditions (8.4)", () => {
+  it("ice-near / scanner-near see live sentries within radius from a non-breach node", () => {
+    const log = battle(
+      [
+        row({ id: "ice", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }, { kind: "ice-near", tier: 1 }], actions: [{ kind: "cloak", tier: 1 }] }),
+        row({ id: "scan", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }, { kind: "scanner-near", tier: 1 }], actions: [{ kind: "arm-decoy", tier: 1 }] }),
+        row({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "hold-position" }] }),
+        row({ actions: [{ kind: "move-toward-core" }] }),
+      ],
+      ICE_SCANNER_GRAPH,
+    );
+    expect(firedRules(log)).toEqual(expect.arrayContaining(["ice", "scan"]));
+  });
+
+  it("core-within-hops is true only within the given radius of Core", () => {
+    const tooNarrow = battle([row({ id: "near", conditions: [{ kind: "core-within-hops", hops: 1 }] , actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    expect(firedRules(tooNarrow)).not.toContain("near"); // Entry is 2 hops from Core on QUIET_LINE.
+    const wideEnough = battle([row({ id: "near", conditions: [{ kind: "core-within-hops", hops: 2 }] , actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    expect(firedRules(wideEnough)).toContain("near");
+  });
+
+  it("core-hp-below tracks Core's own HP dropping", () => {
+    const log = battle(
+      [row({ id: "hurt", conditions: [{ kind: "core-hp-below", thresholdPermille: 900 }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "brute-force", tier: 3 }, { kind: "move-toward-core" }] })],
+      QUIET_LINE,
+    );
+    expect(firedRules(log)).toContain("hurt");
+  });
+
+  it("node-hp-below reads the occupied Breach Node's own HP", () => {
+    const log = battle(
+      [row({ id: "low-hp", conditions: [{ kind: "node-hp-below", thresholdPermille: 950 }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "brute-force", tier: 1 }, { kind: "move-toward-core" }] })],
+      FIREWALL_LINE,
+    );
+    expect(firedRules(log)).toContain("low-hp");
+  });
+
+  it("blocked-ahead sees a live Breach Node ahead", () => {
+    const log = battle([row({ id: "blocked", conditions: [{ kind: "blocked-ahead" }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })], FIREWALL_LINE);
+    expect(firedRules(log)).toContain("blocked"); // the Firewall is ahead from the Entry, alive.
+  });
+
+  it("visited-here-before is false for the current dwell and true only on a later, separate return", () => {
+    const log = battle(
+      [
+        row({ id: "back", once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "move-back" }] }),
+        row({ id: "seen", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }, { kind: "visited-here-before" }], actions: [{ kind: "cloak", tier: 1 }] }),
+        row({ actions: [{ kind: "move-toward-core" }] }),
+      ],
+      QUIET_LINE,
+    );
+    const backTick = log.events.find((event) => event.type === "rule-fired" && event.actor === "back")!.tick;
+    const seenTick = log.events.find((event) => event.type === "rule-fired" && event.actor === "seen")!.tick;
+    expect(seenTick).toBeGreaterThan(backTick); // never true on the visit that "back" reacted to.
+  });
+
+  it("cloak-ready matches Cloak's own active/cooldown window exactly", () => {
+    const config = getCloakConfigV2(1);
+    const log = battle(
+      [row({ id: "probe", conditions: [{ kind: "cloak-ready" }], actions: [{ kind: "hold-position" }] }), row({ actions: [{ kind: "cloak", tier: 1 }] })],
+      QUIET_LINE,
+    );
+    const probeTicks = log.events.filter((event) => event.type === "rule-fired" && event.actor === "probe").map((event) => event.tick);
+    expect(probeTicks).toContain(0);
+    expect(probeTicks).not.toContain(1);
+    expect(probeTicks).toContain(config.durationTicks + config.cooldownTicks);
+  });
+
+  it("decoy-armed turns on only after arm-decoy actually charges a shield", () => {
+    const log = battle(
+      [row({ id: "probe", conditions: [{ kind: "decoy-armed" }], actions: [{ kind: "hold-position" }] }), row({ once: "battle", actions: [{ kind: "arm-decoy", tier: 1 }] })],
+      QUIET_LINE,
+    );
+    const probeTicks = log.events.filter((event) => event.type === "rule-fired" && event.actor === "probe").map((event) => event.tick);
+    expect(probeTicks).not.toContain(0);
+    expect(probeTicks).toContain(1);
+  });
+
+  it("slowed turns on once camped near a Tarpit, and stays off before that", () => {
+    const log = battle(
+      [
+        row({ conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "hold-position" }] }),
+        row({ id: "probe", conditions: [{ kind: "slowed" }], actions: [{ kind: "cloak", tier: 1 }] }),
+        row({ actions: [{ kind: "move-toward-core" }] }),
+      ],
+      TARPIT_GRAPH,
+    );
+    const arrivalAtRouter = log.events.find((event) => event.type === "virus-entered-node" && event.target === "2")!.tick;
+    const probeTick = log.events.find((event) => event.type === "rule-fired" && event.actor === "probe")!.tick;
+    expect(probeTick).toBeGreaterThanOrEqual(arrivalAtRouter);
+  });
+
+  it("jammed matches the existing sensor-blinding Jammer mechanic", () => {
+    const log = battle([row({ id: "probe", conditions: [{ kind: "jammed" }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })], JAMMER_GRAPH);
+    expect(firedRules(log)).toContain("probe"); // the Jammer itself sits directly on the only path to Core.
+  });
+
+  it("alarm-active turns on once the network alert fires", () => {
+    const log = battle(
+      [row({ id: "probe", conditions: [{ kind: "alarm-active" }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "move-toward-core" }] })],
+      ALARM_GRAPH,
+    );
+    expect(firedRules(log)).toContain("probe");
+  });
+
+  it("tick-after gates on an absolute tick number", () => {
+    const log = battle([row({ id: "late", conditions: [{ kind: "tick-after", ticks: 20 }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    const fired = log.events.find((event) => event.type === "rule-fired" && event.actor === "late");
+    expect(fired).toBeDefined();
+    expect(fired!.tick).toBeGreaterThanOrEqual(20);
+  });
+
+  it("every-n-ticks fires only on exact multiples, clamped to the stated minimum of 5", () => {
+    const log = battle([row({ id: "beat", conditions: [{ kind: "every-n-ticks", ticks: 10 }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    const ticks = log.events.filter((event) => event.type === "rule-fired" && event.actor === "beat").map((event) => event.tick);
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks.every((tick) => tick % 10 === 0)).toBe(true);
+
+    const clamped = battle([row({ id: "beat", conditions: [{ kind: "every-n-ticks", ticks: 1 }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    const clampedTicks = clamped.events.filter((event) => event.type === "rule-fired" && event.actor === "beat").map((event) => event.tick);
+    expect(clampedTicks.every((tick) => tick % MIN_EVERY_N_TICKS_V2 === 0)).toBe(true);
+  });
+
+  it("is-clone distinguishes a split body from the original entity", () => {
+    const log = battle(
+      [row({ once: "battle", actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }), row({ id: "clone-only", conditions: [{ kind: "is-clone" }], actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "move-random" }] })],
+      SPLIT_HUB,
+      11,
+    );
+    const cloneOnlyEvents = log.events.filter((event) => event.type === "rule-fired" && event.actor === "clone-only");
+    expect(cloneOnlyEvents.length).toBeGreaterThan(0);
+    expect(cloneOnlyEvents.every((event) => event.entityId === 1)).toBe(true);
+  });
+
+  it("entity-count-below reads the CURRENT living body count", () => {
+    const stillOne = battle([row({ id: "few", conditions: [{ kind: "entity-count-below", count: 2 }] , actions: [{ kind: "cloak", tier: 1 }] }), row({ actions: [{ kind: "hold-position" }] })], QUIET_LINE);
+    expect(firedRules(stillOne)).toContain("few"); // never splits — always 1 < 2.
+
+    const afterSplit = battle(
+      [row({ once: "battle", actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }), row({ id: "few", conditions: [{ kind: "entity-count-below", count: 2 }] , actions: [] }), row({ actions: [{ kind: "move-random" }] })],
+      SPLIT_HUB,
+      11,
+    );
+    const fewAfterSplit = afterSplit.events.filter((event) => event.type === "rule-fired" && event.actor === "few" && event.tick > 7);
+    expect(fewAfterSplit).toHaveLength(0); // 2 bodies alive is never < 2.
   });
 });

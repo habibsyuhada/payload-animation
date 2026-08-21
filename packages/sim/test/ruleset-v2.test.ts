@@ -36,6 +36,23 @@ const ALL_CONDITION_KINDS: readonly ConditionKind[] = [
   "took-damage-last-tick",
   "on-breach-node",
   "at-node",
+  "ice-near",
+  "scanner-near",
+  "core-within-hops",
+  "core-hp-below",
+  "node-hp-below",
+  "blocked-ahead",
+  "visited-here-before",
+  "cloak-ready",
+  "decoy-armed",
+  "slowed",
+  "jammed",
+  "alarm-active",
+  "tick-after",
+  "every-n-ticks",
+  "flag-is",
+  "is-clone",
+  "entity-count-below",
 ];
 
 const ALL_ACTION_KINDS: readonly ActionKind[] = [

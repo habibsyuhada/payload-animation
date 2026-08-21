@@ -39,6 +39,13 @@ import {
   getSlowCrawlConfigV2,
   getWormSplitConfigV2,
   WORM_SPLIT_MIN_INTEGRITY_V2,
+  DEFAULT_CORE_WITHIN_HOPS_V2,
+  DEFAULT_ENTITY_COUNT_V2,
+  DEFAULT_FLAG_INDEX_V2,
+  DEFAULT_HP_THRESHOLD_PERMILLE_V2,
+  DEFAULT_TICKS_PARAM_V2,
+  MIN_EVERY_N_TICKS_V2,
+  FLAG_COUNT_V2,
 } from "./ruleset-v2.js";
 import { sheetCanSplit, walkSheet } from "./sheet.js";
 import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, SheetAction, SheetCondition, SheetEvent } from "./types.js";
@@ -199,6 +206,13 @@ interface VirusEntity {
   respawnsTotal: number;
   /** Never decreases, never reset by re-setting the checkpoint — a whole-battle budget. */
   respawnsUsed: number;
+  /** `set-flag`/`flag-is` (PLAN.md 8.4, RULESET.md §12) — program memory, copied to a split clone
+   * like `firedOnceKeys`, never reset by anything else this body does. */
+  readonly flags: boolean[];
+  /** `visited-here-before` (PLAN.md 8.4) — nodes this body has DEPARTED at least once (added on
+   * departure, not arrival, so the dwell a node was first reached on never reads as "visited
+   * before" — only a genuine, later return does). Copied to a split clone like `firedOnceKeys`. */
+  readonly visitedNodeIds: Set<number>;
 }
 
 interface BattleStateV2 {
@@ -378,6 +392,89 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
     }
     case "at-node":
       return location.kind === "node";
+    // --- v2-only, PLAN.md 8.4 ---
+    case "ice-near": {
+      if (isJammed(ctx.graph, location)) {
+        return false;
+      }
+      const radius = getConditionRadiusHops("ice-near", condition.tier ?? 1);
+      return ctx.graph.nodes.some(
+        (node) => node.type === "ice-sentry" && isVirusInRange(ctx.graph, node.id, radius, location) && ctx.tick >= (ctx.state.iceNextFireTick.get(node.id) ?? 0),
+      );
+    }
+    case "scanner-near": {
+      if (isJammed(ctx.graph, location)) {
+        return false;
+      }
+      const radius = getConditionRadiusHops("scanner-near", condition.tier ?? 1);
+      return ctx.graph.nodes.some((node) => node.type === "scanner" && isVirusInRange(ctx.graph, node.id, radius, location));
+    }
+    case "core-within-hops": {
+      const hops = condition.hops ?? DEFAULT_CORE_WITHIN_HOPS_V2;
+      const fromNodeId = location.kind === "node" ? location.nodeId : location.to;
+      const distance = hopDistance(ctx.graph, fromNodeId, ctx.graph.coreNodeId);
+      return distance !== null && distance <= hops;
+    }
+    case "core-hp-below": {
+      if (ctx.graph.coreHp <= 0) {
+        return false;
+      }
+      const threshold = condition.thresholdPermille ?? DEFAULT_HP_THRESHOLD_PERMILLE_V2;
+      return (ctx.state.coreHp * 1000) / ctx.graph.coreHp < threshold;
+    }
+    case "node-hp-below": {
+      const here = currentNodeId(location);
+      if (here === null) {
+        return false;
+      }
+      const node = findNode(ctx.graph, here);
+      const threshold = condition.thresholdPermille ?? DEFAULT_HP_THRESHOLD_PERMILLE_V2;
+      if (node.type === "core") {
+        return ctx.graph.coreHp > 0 && (ctx.state.coreHp * 1000) / ctx.graph.coreHp < threshold;
+      }
+      if (node.type === "firewall" && !ctx.state.destroyedFirewallIds.has(node.id)) {
+        const maxHp = firewallMaxHpV2(requireTier(node));
+        const currentHp = ctx.state.firewallHp.get(node.id) ?? maxHp;
+        return (currentHp * 1000) / maxHp < threshold;
+      }
+      return false;
+    }
+    case "blocked-ahead": {
+      const ahead = nodeAheadId(ctx.graph, location);
+      return ahead !== null && isBreachNode(ctx.graph, ctx.state, ahead);
+    }
+    case "visited-here-before": {
+      const here = currentNodeId(location);
+      return here !== null && ctx.entity.visitedNodeIds.has(here);
+    }
+    case "cloak-ready":
+      return ctx.tick >= ctx.entity.cloakUntilTick && ctx.tick >= ctx.entity.cloakReadyAtTick;
+    case "decoy-armed":
+      return ctx.entity.decoy.absorbsRemaining > 0;
+    case "slowed": {
+      const here = currentNodeId(location);
+      return here !== null && activeTarpitMultiplierPermille(ctx.graph, here) < 1000;
+    }
+    case "jammed":
+      return isJammed(ctx.graph, location);
+    case "alarm-active":
+      return ctx.tick < ctx.state.alarmActiveUntilTick;
+    case "tick-after":
+      return ctx.tick >= (condition.ticks ?? DEFAULT_TICKS_PARAM_V2);
+    case "every-n-ticks": {
+      const ticks = Math.max(MIN_EVERY_N_TICKS_V2, condition.ticks ?? DEFAULT_TICKS_PARAM_V2);
+      return ctx.tick % ticks === 0;
+    }
+    case "flag-is": {
+      const flagIndex = condition.flagIndex ?? DEFAULT_FLAG_INDEX_V2;
+      return ctx.entity.flags[flagIndex] === true;
+    }
+    case "is-clone":
+      return ctx.entity.id !== 0;
+    case "entity-count-below": {
+      const count = condition.count ?? DEFAULT_ENTITY_COUNT_V2;
+      return ctx.state.entities.filter((candidate) => !candidate.died).length < count;
+    }
     default:
       return false;
   }
@@ -579,6 +676,8 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     respawnIntegrity: 0,
     respawnsTotal: 0,
     respawnsUsed: 0,
+    flags: new Array(FLAG_COUNT_V2).fill(false),
+    visitedNodeIds: new Set(),
   };
   /** Append-only, ascending, never reused (PLAN.md 8.3a: entities are never spliced). */
   let nextEntityId = 1;
@@ -1086,6 +1185,9 @@ export function simulateV2(input: BattleInputV2): BattleLog {
               state.turnstileLockouts.set(fromNodeId, tick + getTurnstileConfigV2(requireTier(findNode(graph, fromNodeId))).lockoutTicks);
             }
             entity.previousNodeId = fromNodeId;
+            // "visited-here-before" (PLAN.md 8.4): marked on DEPARTURE, not arrival — the dwell a
+            // node was first reached on must never read as a previous visit to itself.
+            entity.visitedNodeIds.add(fromNodeId);
             entity.location = { kind: "edge", from: fromNodeId, to: target, remainingTicks: ticksToCrossEdge(findEdgeLength(graph, fromNodeId, target), speed) };
           }
         }
@@ -1140,6 +1242,8 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         respawnIntegrity: 0,
         respawnsTotal: 0,
         respawnsUsed: 0,
+        flags: [...entity.flags],
+        visitedNodeIds: new Set(entity.visitedNodeIds),
       };
       state.entities.push(clone);
       w.firedRuleIds.add(plan.split.ruleId);

@@ -87,7 +87,37 @@ export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
   { kind: "took-damage-last-tick", category: "state", weightKb: 90 },
   { kind: "on-breach-node", category: "position", weightKb: 90 },
   { kind: "at-node", category: "position", weightKb: 60 },
+  // v2-only, PLAN.md 8.4 (RULESET.md §10.1 B.1).
+  { kind: "ice-near", category: "sensor", weightKbByTier: { 1: 380, 2: 480, 3: 580 }, radiusHopsByTier: { 1: 1, 2: 2, 3: 3 } },
+  { kind: "scanner-near", category: "sensor", weightKbByTier: { 1: 300, 2: 400, 3: 500 }, radiusHopsByTier: { 1: 1, 2: 2, 3: 3 } },
+  { kind: "core-within-hops", category: "position", weightKb: 200 },
+  { kind: "core-hp-below", category: "state", weightKb: 220 },
+  { kind: "node-hp-below", category: "state", weightKb: 240 },
+  { kind: "blocked-ahead", category: "position", weightKb: 180 },
+  { kind: "visited-here-before", category: "state", weightKb: 160 },
+  { kind: "cloak-ready", category: "state", weightKb: 110 },
+  { kind: "decoy-armed", category: "state", weightKb: 100 },
+  { kind: "slowed", category: "state", weightKb: 90 },
+  { kind: "jammed", category: "state", weightKb: 90 },
+  { kind: "alarm-active", category: "state", weightKb: 100 },
+  { kind: "tick-after", category: "state", weightKb: 100 },
+  { kind: "every-n-ticks", category: "state", weightKb: 120 },
+  { kind: "flag-is", category: "state", weightKb: 80 },
+  { kind: "is-clone", category: "state", weightKb: 80 },
+  { kind: "entity-count-below", category: "state", weightKb: 120 },
 ];
+
+/** Defaults for 8.4's new numeric condition parameters, applied when a row doesn't set one. */
+export const DEFAULT_CORE_WITHIN_HOPS_V2 = 3;
+export const DEFAULT_HP_THRESHOLD_PERMILLE_V2 = 500;
+export const DEFAULT_TICKS_PARAM_V2 = 100;
+export const DEFAULT_FLAG_INDEX_V2 = 0;
+export const DEFAULT_ENTITY_COUNT_V2 = 2;
+/** "every-n-ticks" refuses anything below this (RULESET.md §10.1) — a lower bound the UI and
+ * `validateVirusProgram` both enforce, not just a suggested default. */
+export const MIN_EVERY_N_TICKS_V2 = 5;
+/** How many boolean flags a body carries (RULESET.md §12, PLAN.md B.3) — `flagIndex` runs 0..3. */
+export const FLAG_COUNT_V2 = 4;
 
 /**
  * Which slot an action writes, if any (ADR 0006 §3). Slot actions take the FIRST writer in a
