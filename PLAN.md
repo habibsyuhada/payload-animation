@@ -235,10 +235,15 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       satu-entitas di `compile.test.ts`/`camera.test.ts`/`draw.test.ts` lulus tanpa diedit; battle
       split menampilkan dua tubuh dengan health bar independen (diverifikasi via test baru yang
       benar-benar men-split, bukan cuma fixture satu-entitas).
-- [ ] **8.4** 17 kondisi & 13 aksi baru (lihat ADR 0007 §B) di `ruleset-v2.ts` +
-      `sheetCatalog.ts` (katalog params generik menggantikan `takesNodeTypes`/`takesThreshold`) —
-      `CATALOG_COVERS_EVERY_KIND` tetap lulus, ≥2 test perilaku per kondisi/aksi baru, cek manual
-      390×844 untuk chip berparameter; hash **sengaja** di-regenerasi, disebut di commit.
+- [x] **8.4** 17 kondisi & 13 aksi baru (lihat ADR 0007 §B) di `ruleset-v2.ts` +
+      `sheetCatalog.ts` (katalog params generik `ParamSpec` menggantikan `takesNodeTypes`/`takesThreshold`)
+      + `virusLabStore.ts`/`VirusLab.tsx` (kontrol generik per param, `updateAction` mutator baru) —
+      `CATALOG_COVERS_EVERY_KIND` tetap lulus (dites eksplisit), ≥2 test perilaku engine per
+      kondisi/aksi baru, cek manual 390×844 untuk chip berparameter (termasuk `set-flag` yang
+      dua-parameter) dilakukan lewat `vite`+Playwright screenshot, layout aman. Hash **tidak**
+      bergerak: `SCENARIO_SHEET_V2` yang dibekukan di `determinism.test.ts` tidak memakai satu pun
+      kondisi/aksi baru, jadi tidak ada byte yang berubah untuknya — berbeda dari 8.2b yang memang
+      mengubah perilaku node yang SUDAH dipakai skenario itu.
 - [ ] **8.5** `docs/RULESET.md` diperluas di tempat (§5/§10-13 + §11a + §14 baru) dan koreksi §0
       (tandai eksplisit "v1"); `docs/ADR/0008` (multi-entitas & checkpoint), `docs/ADR/0009` (riset
       & ekonomi lokal, termasuk pelonggaran boundaries `shared → sim`); `docs/HANDOFF.md` ditulis

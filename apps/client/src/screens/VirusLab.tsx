@@ -20,6 +20,7 @@ import {
   conditionWeightKb,
   findActionEntry,
   findConditionEntry,
+  type ParamSpec,
 } from "../data/sheetCatalog.js";
 import { PRACTICE_DEFENSES } from "../data/practiceDefenses.js";
 import { canNestUnder, toVirusProgram, useVirusLabStore, type ActionInstance, type ConditionInstance, type RowInstance } from "../state/virusLabStore.js";
@@ -68,6 +69,61 @@ interface PickerRequest {
   readonly mode: "condition" | "action";
 }
 
+/** "targetNodeType" -> "target-node-type", so every param's control gets its own stable testid. */
+function paramSlug(key: string): string {
+  return key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+/** Renders the one control a `ParamSpec` describes, reading/writing the matching field on a
+ * `ConditionInstance` (PLAN.md 8.4 — replaces the old `takesNodeTypes`/`takesThreshold` booleans,
+ * which couldn't grow past two params). */
+function ConditionParamControl({ rowId, condition, param, label }: { rowId: string; condition: ConditionInstance; param: ParamSpec; label: string }): JSX.Element {
+  const updateCondition = useVirusLabStore((state) => state.updateCondition);
+  const testId = `sheet-condition-${paramSlug(param.key)}`;
+  const ariaLabel = `${param.label} untuk ${label}`;
+
+  if (param.kind === "node-types") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={condition.targetNodeType} onChange={(event) => updateCondition(rowId, condition.id, { targetNodeType: event.target.value as DefenseNodeType })}>
+        {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
+          <option key={option.type} value={option.type}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "threshold") {
+    const value = param.key === "integrityThresholdPermille" ? condition.integrityThresholdPermille : condition.thresholdPermille;
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={value} onChange={(event) => updateCondition(rowId, condition.id, { [param.key]: Number(event.target.value) })}>
+        {THRESHOLD_OPTIONS.map((permille) => (
+          <option key={permille} value={permille}>
+            {permille / 10}%
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "bool") {
+    // No condition in CONDITION_CATALOG uses a "bool" param today — only `set-flag` (an action) does.
+    throw new Error(`ConditionParamControl: unexpected bool param "${param.key}"`);
+  }
+  // "int" — the four params it covers (hops/ticks/flagIndex/count) are all plain numbers on ConditionInstance.
+  return (
+    <input
+      type="number"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      min={param.min}
+      max={param.max}
+      step={param.step ?? 1}
+      value={condition[param.key]}
+      onChange={(event) => updateCondition(rowId, condition.id, { [param.key]: Number(event.target.value) })}
+    />
+  );
+}
+
 function ConditionChip({ rowId, condition }: { rowId: string; condition: ConditionInstance }): JSX.Element {
   const entry = findConditionEntry(condition.kind);
   const removeCondition = useVirusLabStore((state) => state.removeCondition);
@@ -87,34 +143,9 @@ function ConditionChip({ rowId, condition }: { rowId: string; condition: Conditi
         NOT
       </button>
       <span className="payload-sheet-chip-label">{entry.label}</span>
-      {entry.takesNodeTypes && (
-        <select
-          data-testid="sheet-condition-node-type"
-          aria-label={`Tipe node untuk ${entry.label}`}
-          value={condition.targetNodeType}
-          onChange={(event) => updateCondition(rowId, condition.id, { targetNodeType: event.target.value as DefenseNodeType })}
-        >
-          {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
-            <option key={option.type} value={option.type}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      )}
-      {entry.takesThreshold && (
-        <select
-          data-testid="sheet-condition-threshold"
-          aria-label={`Ambang untuk ${entry.label}`}
-          value={condition.integrityThresholdPermille}
-          onChange={(event) => updateCondition(rowId, condition.id, { integrityThresholdPermille: Number(event.target.value) })}
-        >
-          {THRESHOLD_OPTIONS.map((permille) => (
-            <option key={permille} value={permille}>
-              {permille / 10}%
-            </option>
-          ))}
-        </select>
-      )}
+      {entry.params.map((param) => (
+        <ConditionParamControl key={param.key} rowId={rowId} condition={condition} param={param} label={entry.label} />
+      ))}
       {conditionIsTiered(condition.kind) && (
         <select
           data-testid="sheet-condition-tier"
@@ -137,6 +168,51 @@ function ConditionChip({ rowId, condition }: { rowId: string; condition: Conditi
   );
 }
 
+/** Same idea as `ConditionParamControl`, for the `ActionInstance` side. Only `set-flag` needs two
+ * params at once (`flagIndex` + `flagValue`) — the two-parameter chip the 390px check has to look at. */
+function ActionParamControl({ rowId, action, param, label }: { rowId: string; action: ActionInstance; param: ParamSpec; label: string }): JSX.Element {
+  const updateAction = useVirusLabStore((state) => state.updateAction);
+  const testId = `sheet-action-${paramSlug(param.key)}`;
+  const ariaLabel = `${param.label} untuk ${label}`;
+
+  if (param.kind === "node-types") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={action.targetNodeType} onChange={(event) => updateAction(rowId, action.id, { targetNodeType: event.target.value as DefenseNodeType })}>
+        {CONDITION_NODE_TYPE_OPTIONS.map((option) => (
+          <option key={option.type} value={option.type}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (param.kind === "bool") {
+    return (
+      <select data-testid={testId} aria-label={ariaLabel} value={action.flagValue ? "on" : "off"} onChange={(event) => updateAction(rowId, action.id, { flagValue: event.target.value === "on" })}>
+        <option value="on">Nyala</option>
+        <option value="off">Mati</option>
+      </select>
+    );
+  }
+  if (param.kind === "threshold") {
+    // No action in ACTION_CATALOG uses a "threshold" param today — only conditions do.
+    throw new Error(`ActionParamControl: unexpected threshold param "${param.key}"`);
+  }
+  // "int" — the only action-side int param is flagIndex.
+  return (
+    <input
+      type="number"
+      data-testid={testId}
+      aria-label={ariaLabel}
+      min={param.min}
+      max={param.max}
+      step={param.step ?? 1}
+      value={action.flagIndex}
+      onChange={(event) => updateAction(rowId, action.id, { flagIndex: Number(event.target.value) })}
+    />
+  );
+}
+
 function ActionChip({ rowId, action, index, total }: { rowId: string; action: ActionInstance; index: number; total: number }): JSX.Element {
   const entry = findActionEntry(action.kind);
   const removeAction = useVirusLabStore((state) => state.removeAction);
@@ -147,6 +223,9 @@ function ActionChip({ rowId, action, index, total }: { rowId: string; action: Ac
   return (
     <li className="payload-sheet-chip" data-testid="sheet-action" data-kind={action.kind} style={{ borderColor: actionColor(action.kind) }} title={tierDetail ?? entry.summary}>
       <span className="payload-sheet-chip-label">{entry.label}</span>
+      {entry.params.map((param) => (
+        <ActionParamControl key={param.key} rowId={rowId} action={action} param={param} label={entry.label} />
+      ))}
       {entry.tiers && (
         <select data-testid="sheet-action-tier" aria-label={`Tier untuk ${entry.label}`} value={action.tier} onChange={(event) => setActionTier(rowId, action.id, Number(event.target.value) as BlockTier)}>
           {entry.tiers.map((option) => (
