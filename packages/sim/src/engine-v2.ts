@@ -36,7 +36,7 @@ import {
   getSelfRepairHealPerTickV2,
   getSlowCrawlConfigV2,
 } from "./ruleset-v2.js";
-import { walkSheet } from "./sheet.js";
+import { sheetCanSplit, walkSheet } from "./sheet.js";
 import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, SheetAction, SheetCondition, SheetEvent } from "./types.js";
 
 /**
@@ -116,6 +116,8 @@ interface TickPlan {
   cloak: SlotWrite<BlockTier> | null;
   slowCrawl: SlotWrite<BlockTier> | null;
   decoy: SlotWrite<BlockTier> | null;
+  /** Written by `worm-split` (slot dispatch only — 8.3b). Consuming it into an actual new entity is 8.3c's job. */
+  split: SlotWrite<BlockTier> | null;
   readonly bruteForce: Contribution[];
   readonly exploit: Contribution[];
   readonly overload: OverloadContribution[];
@@ -124,7 +126,7 @@ interface TickPlan {
 }
 
 function emptyPlan(): TickPlan {
-  return { movement: null, cloak: null, slowCrawl: null, decoy: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
+  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
 }
 
 interface DecoyState {
@@ -381,6 +383,10 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
     plan.decoy = writeSlot(plan.decoy, ruleId, tier);
     return;
   }
+  if (spec.slot === "split") {
+    plan.split = writeSlot(plan.split, ruleId, tier);
+    return;
+  }
   if (kind === "brute-force") {
     plan.bruteForce.push({ ruleId, amount: getBruteForceDamagePerTickV2(tier) });
   } else if (kind === "exploit") {
@@ -495,6 +501,13 @@ export function simulateV2(input: BattleInputV2): BattleLog {
   const rng = createRng(input.seed);
   const events: BattleEvent[] = [];
 
+  /**
+   * Decided once, before tick 0 (ADR 0008, PLAN.md 8.3b) — a sheet that can never write the split
+   * slot never emits `entityId`, so a log's event shape depends only on the sheet, never on
+   * whether a split actually happened later in this particular battle.
+   */
+  const canSplit = sheetCanSplit(input.virus);
+
   const entryIndex = rng.nextInt(graph.entryNodeIds.length);
   const firstEntity: VirusEntity = {
     id: 0,
@@ -531,7 +544,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     alarmActiveUntilTick: 0,
   };
 
-  events.push({ tick: 0, type: "virus-entered-node", actor: "virus", target: String(graph.entryNodeIds[entryIndex]!) });
+  events.push({ tick: 0, type: "virus-entered-node", actor: "virus", target: String(graph.entryNodeIds[entryIndex]!), ...(canSplit ? { entityId: firstEntity.id } : {}) });
 
   const iceSentryNodes = graph.nodes.filter((node) => node.type === "ice-sentry").sort((a, b) => a.id - b.id);
   const scannerNodes = graph.nodes.filter((node) => node.type === "scanner").sort((a, b) => a.id - b.id);
@@ -624,7 +637,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         // Cooldown runs from expiry, so `[always] -> Cloak` buys a window, never permanent invisibility.
         entity.cloakReadyAtTick = entity.cloakUntilTick + config.cooldownTicks;
         w.firedRuleIds.add(plan.cloak.ruleId);
-        events.push({ tick, type: "status-applied", actor: "cloak", target: "virus" });
+        events.push({ tick, type: "status-applied", actor: "cloak", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
       }
       w.cloakActive = tick < entity.cloakUntilTick;
       w.slowCrawl = plan.slowCrawl ? getSlowCrawlConfigV2(plan.slowCrawl.value) : null;
@@ -696,12 +709,12 @@ export function simulateV2(input: BattleInputV2): BattleLog {
               const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHpV2(requireTier(node));
               const newHp = Math.max(0, currentHp - contribution.splashDamage);
               state.firewallHp.set(node.id, newHp);
-              events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp) });
+              events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp), ...(canSplit ? { entityId: entity.id } : {}) });
               w.firedRuleIds.add(contribution.ruleId);
               if (newHp <= 0) {
                 state.destroyedFirewallIds.add(node.id);
                 state.firewallsDestroyed += 1;
-                events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id) });
+                events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id), ...(canSplit ? { entityId: entity.id } : {}) });
                 triggerAlarmsNear(node.id);
               }
             } else if (node.type === "core" && state.coreHp > 0) {
@@ -709,7 +722,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
               const drained = state.coreHp - newHp;
               state.coreHp = newHp;
               if (drained > 0) {
-                events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -drained });
+                events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -drained, ...(canSplit ? { entityId: entity.id } : {}) });
                 w.firedRuleIds.add(contribution.ruleId);
               }
             }
@@ -725,16 +738,16 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           const passive = resolveFirewallTickV2(currentHp, tier);
           const newHp = Math.max(0, passive.remainingHp - bruteForceDamage - exploitDamage);
           state.firewallHp.set(node.id, newHp);
-          events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp) });
+          events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp), ...(canSplit ? { entityId: entity.id } : {}) });
           creditAttack(bruteForceDamage + exploitDamage);
           const dealt = damageVirus(entity, passive.counterDamageToVirus);
           if (dealt > 0) {
-            events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt });
+            events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt, ...(canSplit ? { entityId: entity.id } : {}) });
           }
           if (newHp <= 0) {
             state.destroyedFirewallIds.add(node.id);
             state.firewallsDestroyed += 1;
-            events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id) });
+            events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id), ...(canSplit ? { entityId: entity.id } : {}) });
             applyOverloadSplash(node.id);
             triggerAlarmsNear(node.id);
           }
@@ -744,7 +757,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           const drained = state.coreHp - newHp;
           state.coreHp = newHp;
           if (drained > 0) {
-            events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -drained });
+            events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -drained, ...(canSplit ? { entityId: entity.id } : {}) });
           }
           creditAttack(bruteForceDamage + exploitDamage);
         }
@@ -809,10 +822,10 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       }
       entitiesHitByIceThisTick.add(target.id);
       if (tryAbsorbWithDecoy(target)) {
-        events.push({ tick, type: "decoy-absorbed", actor: String(iceNode.id), target: "virus" });
+        events.push({ tick, type: "decoy-absorbed", actor: String(iceNode.id), target: "virus", ...(canSplit ? { entityId: target.id } : {}) });
       } else {
         const dealt = damageVirus(target, config.damage);
-        events.push({ tick, type: "virus-damaged", actor: String(iceNode.id), target: "virus", delta: -dealt });
+        events.push({ tick, type: "virus-damaged", actor: String(iceNode.id), target: "virus", delta: -dealt, ...(canSplit ? { entityId: target.id } : {}) });
       }
     }
 
@@ -829,22 +842,22 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         if (entity.freshArrival && !state.triggeredHoneypotIds.has(node.id)) {
           state.triggeredHoneypotIds.add(node.id);
           if (tryAbsorbWithDecoy(entity)) {
-            events.push({ tick, type: "decoy-absorbed", actor: String(node.id), target: "virus" });
+            events.push({ tick, type: "decoy-absorbed", actor: String(node.id), target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
           } else {
             entity.honeypotPendingDeathTick = tick + 1;
           }
         } else if (entity.honeypotPendingDeathTick === tick) {
           const dealt = damageVirus(entity, entity.integrity);
           entity.honeypotPendingDeathTick = null;
-          events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt });
+          events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt, ...(canSplit ? { entityId: entity.id } : {}) });
         }
       } else if (node.type === "trap" && entity.freshArrival && !state.spentTrapIds.has(node.id)) {
         state.spentTrapIds.add(node.id);
         if (tryAbsorbWithDecoy(entity)) {
-          events.push({ tick, type: "decoy-absorbed", actor: String(node.id), target: "virus" });
+          events.push({ tick, type: "decoy-absorbed", actor: String(node.id), target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
         } else {
           const dealt = damageVirus(entity, trapTriggerDamageV2(requireTier(node)));
-          events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt });
+          events.push({ tick, type: "virus-damaged", actor: String(node.id), target: "virus", delta: -dealt, ...(canSplit ? { entityId: entity.id } : {}) });
         }
       }
     }
@@ -864,7 +877,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         if (statusExpired || config.iceAccuracyBonusPermille >= entity.scannedAccuracyBonusPermille) {
           entity.scannedUntilTick = tick + config.durationTicks;
           entity.scannedAccuracyBonusPermille = config.iceAccuracyBonusPermille;
-          events.push({ tick, type: "status-applied", actor: String(scannerNode.id), target: "virus" });
+          events.push({ tick, type: "status-applied", actor: String(scannerNode.id), target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
         }
       }
     }
@@ -911,7 +924,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         const before = entity.integrity;
         entity.integrity = Math.min(VIRUS_START_INTEGRITY, entity.integrity + healAmount);
         if (entity.integrity > before) {
-          events.push({ tick, type: "virus-repaired", actor: "self-repair", target: "virus", delta: entity.integrity - before });
+          events.push({ tick, type: "virus-repaired", actor: "self-repair", target: "virus", delta: entity.integrity - before, ...(canSplit ? { entityId: entity.id } : {}) });
           for (const contribution of plan.selfRepair) {
             w.firedRuleIds.add(contribution.ruleId);
           }
@@ -923,7 +936,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           entity.decoy.activationsUsed += 1;
           entity.decoy.absorbsRemaining = config.absorbsPerActivation;
           w.firedRuleIds.add(plan.decoy.ruleId);
-          events.push({ tick, type: "status-applied", actor: "sacrifice-decoy", target: "virus" });
+          events.push({ tick, type: "status-applied", actor: "sacrifice-decoy", target: "virus", ...(canSplit ? { entityId: entity.id } : {}) });
         }
       }
     }
@@ -945,7 +958,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           entity.arrivalCount += 1;
           entity.freshArrival = true;
           entity.location = { kind: "node", nodeId: edge.to };
-          events.push({ tick, type: "virus-entered-node", actor: "virus", target: String(edge.to) });
+          events.push({ tick, type: "virus-entered-node", actor: "virus", target: String(edge.to), ...(canSplit ? { entityId: entity.id } : {}) });
         }
       } else {
         const fromNodeId: number = entity.location.nodeId;
@@ -969,7 +982,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
             if (slowCrawl) {
               speed = Math.max(1, applyPermille(speed, slowCrawl.speedMultiplierPermille));
             }
-            events.push({ tick, type: "virus-departed-node", actor: "virus", target: String(fromNodeId) });
+            events.push({ tick, type: "virus-departed-node", actor: "virus", target: String(fromNodeId), ...(canSplit ? { entityId: entity.id } : {}) });
             if (findNode(graph, fromNodeId).type === "turnstile") {
               state.turnstileLockouts.set(fromNodeId, tick + getTurnstileConfigV2(requireTier(findNode(graph, fromNodeId))).lockoutTicks);
             }
@@ -983,7 +996,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     // --- 7. rule-fired (entity ascending id, then that entity's own fired rule ids sorted), then win/loss ---
     for (const w of work) {
       for (const ruleId of [...w.firedRuleIds].sort()) {
-        events.push({ tick, type: "rule-fired", actor: ruleId });
+        events.push({ tick, type: "rule-fired", actor: ruleId, ...(canSplit ? { entityId: w.entity.id } : {}) });
       }
     }
 

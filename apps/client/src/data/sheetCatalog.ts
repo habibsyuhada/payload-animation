@@ -163,6 +163,11 @@ export const ACTION_CATALOG: readonly ActionCatalogEntry[] = [
   tiered("slow-crawl", "Slow Crawl", "Tick ini: lebih pelan, lebih sulit ditembak ICE.", "stealth", { 1: "Speed ×70%, akurasi ICE −30%.", 2: "Speed ×75%, akurasi −40%.", 3: "Speed ×80%, akurasi −50%." }),
   tiered("self-repair", "Self Repair", "Menambah Integrity. Syaratnya baris yang kamu tulis sendiri.", "utility", { 1: "+5/tick.", 2: "+8/tick.", 3: "+12/tick." }),
   tiered("arm-decoy", "Pasang Decoy", "Menyerap trigger berikutnya (ICE/Honeypot/Trap).", "utility", { 1: "1 aktivasi, serap 1.", 2: "2 aktivasi, serap 1.", 3: "3 aktivasi, serap 2." }),
+  tiered("worm-split", "Worm Split", "Memecah virus jadi beberapa tubuh yang berbagi sheet ini.", "utility", {
+    1: "2 tubuh, masing-masing 50% sisa Integrity.",
+    2: "2 tubuh, masing-masing 60% sisa Integrity.",
+    3: "Sampai 3 tubuh, masing-masing 65% sisa Integrity.",
+  }),
 ];
 
 export function findConditionEntry(kind: ConditionKind): ConditionCatalogEntry {

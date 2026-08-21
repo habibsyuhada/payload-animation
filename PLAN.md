@@ -220,7 +220,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       split): `entities: VirusEntity[]`, pembagian global/per-entitas, urutan tick §11a (sentry di
       loop luar, satu draw per sentry menembak), skor via maksimum bukan jumlah — **semua hash &
       snapshot tidak bergerak**, 18 kasus `engine-v2.test.ts` hijau tanpa diedit.
-- [ ] **8.3b** `entityId?: number` di `BattleEvent` + gerbang statis `sheetCanSplit()` di `sheet.ts`
+- [x] **8.3b** `entityId?: number` di `BattleEvent` + gerbang statis `sheetCanSplit()` di `sheet.ts`
       (idiom spread bersyarat, bukan `entityId: undefined`) — hash tetap untuk sheet lama; sheet
       split menghasilkan `entityId` di tiap event sejak tick 0.
 - [ ] **8.3c** Aksi `worm-split` + `detonate`: cabang mewarisi salinan `firedOnceKeys` &

@@ -320,3 +320,45 @@ describe("caps", () => {
     expect(log.events[log.events.length - 1]!.type).toBe("battle-timeout");
   });
 });
+
+describe("entityId gating (8.3b)", () => {
+  // Mirrors types.ts's BattleEvent.entityId doc: defense-side and battle-level events never carry
+  // one, split-capable or not — only events "about" a specific body do.
+  const BATTLE_LEVEL_TYPES = new Set(["battle-won", "virus-died", "battle-timeout"]);
+
+  function isEntitySpecific(event: BattleEvent): boolean {
+    if (BATTLE_LEVEL_TYPES.has(event.type)) {
+      return false;
+    }
+    if (event.type === "node-repaired") {
+      return false; // Patch Server heal is entity-independent — it heals nodes, not bodies.
+    }
+    if (event.type === "status-applied" && event.target === "core") {
+      return false; // Alarm Relay's network-wide alert, not a body's own status.
+    }
+    return true;
+  }
+
+  it("omits entityId from every event for a sheet that can never split", () => {
+    const log = battle([row({ actions: [{ kind: "move-toward-core" }] })]);
+    expect(log.events.length).toBeGreaterThan(0);
+    for (const event of log.events) {
+      expect("entityId" in event).toBe(false);
+    }
+  });
+
+  it("stamps entityId on every entity-specific event, including tick 0, for a sheet containing worm-split", () => {
+    // worm-split writes the split slot but 8.3c is what actually consumes it into a new body —
+    // here it only needs to make sheetCanSplit() true and prove the gate is static, not behavioral.
+    const log = battle([row({ actions: [{ kind: "worm-split", tier: 1 }, { kind: "move-toward-core" }] })]);
+    const entitySpecific = log.events.filter(isEntitySpecific);
+    expect(entitySpecific.length).toBeGreaterThan(0);
+    expect(entitySpecific[0]!.tick).toBe(0);
+    for (const event of entitySpecific) {
+      expect(event.entityId).toBe(0);
+    }
+    for (const event of log.events.filter((candidate) => !isEntitySpecific(candidate))) {
+      expect("entityId" in event).toBe(false);
+    }
+  });
+});

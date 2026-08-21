@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RULESET_V2, SHEET_EVENT_ROW_KB_V2, getActionWeightKb, getConditionWeightKb } from "../src/ruleset-v2.js";
-import { countSheetEvents, sheetDepth, sheetHasMovementAction, sheetWeightKb, validateVirusProgram, walkSheet } from "../src/sheet.js";
+import { countSheetEvents, sheetCanSplit, sheetDepth, sheetHasMovementAction, sheetWeightKb, validateVirusProgram, walkSheet } from "../src/sheet.js";
 import type { SheetEvent, VirusProgram } from "../src/types.js";
 
 function row(partial: Partial<SheetEvent> = {}): SheetEvent {
@@ -92,5 +92,16 @@ describe("validateVirusProgram", () => {
     expect(validateVirusProgram({ events: [] }, RULESET_V2, 1).warnings.map((warning) => warning.code)).toContain("empty-sheet");
     const withDeadRow: VirusProgram = { events: [row({ actions: [{ kind: "move-toward-core" }] }), row()] };
     expect(validateVirusProgram(withDeadRow, RULESET_V2, 1).warnings.map((warning) => warning.code)).toContain("unreachable-row");
+  });
+});
+
+describe("sheetCanSplit", () => {
+  it("is false for a sheet with no worm-split row anywhere", () => {
+    expect(sheetCanSplit(MOVER)).toBe(false);
+  });
+
+  it("is true when a worm-split action is nested, even deep in the tree", () => {
+    const nested: VirusProgram = { events: [row({ children: [row({ children: [row({ actions: [{ kind: "worm-split", tier: 1 }] })] })] })] };
+    expect(sheetCanSplit(nested)).toBe(true);
   });
 });

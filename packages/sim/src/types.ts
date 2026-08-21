@@ -89,7 +89,9 @@ export type ActionKind =
   | "slow-crawl"
   // Utility.
   | "self-repair"
-  | "arm-decoy";
+  | "arm-decoy"
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c/8.3d).
+  | "worm-split";
 
 /**
  * How often an event may fire.
@@ -220,6 +222,20 @@ export interface BattleEvent {
   readonly actor: string;
   readonly target?: string;
   readonly delta?: number;
+  /**
+   * v2 multi-entity only (ADR 0008, PLAN.md 8.3b): which VirusEntity this event is about, when it
+   * is about one body specifically (movement, damage/heal to that body, its own rule-fired, its
+   * own status changes) — absent for defense-side and battle-level events (node-repaired by a
+   * Patch Server, battle-won/battle-timeout/virus-died, an Alarm's network-wide status-applied).
+   *
+   * ABSENT (not 0) for every battle whose sheet contains no `worm-split` action — decided once,
+   * before tick 0, by `sheetCanSplit()`, so a log's event shape never depends on whether a split
+   * actually happened later. Every log that exists today has no split action anywhere, so this
+   * field is byte-for-byte absent from all of them: `entityId: undefined` is NOT the same bytes as
+   * an absent key (determinism.test.ts's stableStringify uses Object.keys), so every write site
+   * uses the `...(canSplit ? { entityId } : {})` idiom, never a literal `entityId: undefined`.
+   */
+  readonly entityId?: number;
 }
 
 export interface Score {

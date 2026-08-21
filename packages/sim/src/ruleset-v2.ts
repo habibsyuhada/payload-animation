@@ -94,7 +94,7 @@ export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
  * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
  * at the bottom must not overwrite the reaction above it.
  */
-export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy";
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split";
 
 export interface ActionSpec {
   readonly kind: ActionKind;
@@ -121,6 +121,10 @@ export const ACTION_SPECS_V2: readonly ActionSpec[] = [
   { kind: "slow-crawl", category: "stealth", weightKbByTier: { 1: 300, 2: 380, 3: 460 }, slot: "slow-crawl" },
   { kind: "self-repair", category: "utility", weightKbByTier: { 1: 450, 2: 550, 3: 650 } },
   { kind: "arm-decoy", category: "utility", weightKbByTier: { 1: 400, 2: 500, 3: 600 }, slot: "decoy" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c): splits the virus into 2 (tier III: up to
+  // 3) bodies sharing the same sheet. Slot "split" — only the first split row to fire in a tick
+  // takes effect, same first-writer-wins rule as every other slot (ADR 0006 §3).
+  { kind: "worm-split", category: "utility", weightKbByTier: { 1: 1100, 2: 1300, 3: 1500 }, slot: "split" },
 ];
 
 export function getConditionSpec(kind: ConditionKind): ConditionSpec {

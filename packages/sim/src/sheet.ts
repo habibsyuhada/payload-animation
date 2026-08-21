@@ -73,6 +73,16 @@ export function sheetHasMovementAction(program: VirusProgram): boolean {
   return walkSheet(program.events).some(({ event }) => event.actions.some((action) => getActionSpec(action.kind).slot === "movement"));
 }
 
+/**
+ * True if any row anywhere in the sheet contains a `worm-split` action — decided once, before
+ * tick 0 (PLAN.md 8.3b, ADR 0008), and used as the static gate for whether `BattleEvent.entityId`
+ * is written at all. A sheet's event shape must not depend on whether a split actually happens
+ * later in a given battle, only on whether the sheet *can* split.
+ */
+export function sheetCanSplit(program: VirusProgram): boolean {
+  return walkSheet(program.events).some(({ event }) => event.actions.some((action) => action.kind === "worm-split"));
+}
+
 export type ProgramValidationErrorCode = "too-deep" | "too-many-events" | "payload-budget-exceeded" | "unknown-kind" | "invalid-threshold";
 export type ProgramValidationWarningCode = "no-movement-action" | "empty-sheet" | "unreachable-row";
 

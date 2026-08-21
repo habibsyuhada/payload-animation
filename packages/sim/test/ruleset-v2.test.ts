@@ -51,6 +51,7 @@ const ALL_ACTION_KINDS: readonly ActionKind[] = [
   "slow-crawl",
   "self-repair",
   "arm-decoy",
+  "worm-split",
 ];
 
 const TIERS: readonly BlockTier[] = [1, 2, 3];
