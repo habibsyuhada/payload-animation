@@ -1,6 +1,8 @@
 import { RULESET_V2, getAccountTierConfig, validateVirusProgram, type ProgramValidationResult } from "@payload/sim";
+import { RESEARCH_TREE, canResearch } from "@payload/shared";
 import { Link } from "react-router-dom";
 import { DEFENSE_BUDGET_PT, spentPt, useDefendStore } from "../state/defendStore.js";
+import { useResearchStore } from "../state/researchStore.js";
 import { toVirusProgram, useVirusLabStore } from "../state/virusLabStore.js";
 import { Screen } from "./Screen.js";
 
@@ -34,12 +36,15 @@ function describeSheetHealth(validation: ProgramValidationResult): string {
 export function Home(): JSX.Element {
   const rows = useVirusLabStore((state) => state.rows);
   const nodes = useDefendStore((state) => state.nodes);
+  const researchData = useResearchStore((state) => state.data);
+  const researchCompleted = useResearchStore((state) => state.completed);
 
   const validation = validateVirusProgram(toVirusProgram(rows), RULESET_V2, ACCOUNT_TIER);
   const defenseSpent = spentPt(nodes);
   const entryCount = nodes.filter((node) => node.type === "entry").length;
   const coreCount = nodes.filter((node) => node.type === "core").length;
   const defensiveCount = nodes.length - entryCount - coreCount;
+  const researchableCount = RESEARCH_TREE.filter((node) => canResearch(node, { version: 1, data: researchData, completed: researchCompleted, claimed: {} })).length;
 
   return (
     <Screen title="HQ">
@@ -79,7 +84,9 @@ export function Home(): JSX.Element {
         </Link>
         <Link to="/research" className="payload-card payload-card--minor" data-testid="hq-research-card">
           <h2>Riset</h2>
-          <p className="payload-card-note">Buka blok baru · belum ada</p>
+          <p className="payload-card-note" data-testid="hq-research-status">
+            <strong data-testid="hq-research-data">{researchData}</strong> Data · {researchableCount} riset bisa diambil
+          </p>
         </Link>
       </div>
 

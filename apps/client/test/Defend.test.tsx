@@ -1,10 +1,12 @@
 import { EDGE_LENGTH_MIN_DU } from "@payload/sim";
+import { RESEARCH_TREE } from "@payload/shared";
 import { page } from "@vitest/browser/context";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Defend } from "../src/screens/Defend.js";
+import { useResearchStore } from "../src/state/researchStore.js";
 import { CORE_COST_PT, CORE_ID, DEFENSE_BUDGET_PT, ENTRY_COST_PT, ENTRY_ID, useDefendStore } from "../src/state/defendStore.js";
 // The page is laid out entirely by CSS (fixed full-viewport shell, absolutely positioned action
 // bar) — without the stylesheet its elements collapse to zero size and nothing here is clickable.
@@ -18,8 +20,16 @@ const ROUTER_ID = 7;
 /** First id `addNode` assigns after a reset, i.e. the node the picker creates. */
 const ADDED_NODE_ID = 3;
 
+/** These tests are about the layout editor and gauntlet, not about research gating (that lives in
+ * research-gating.test.tsx) — so the default fixture has everything researched, matching how the
+ * picker behaved before PLAN.md 8.7 introduced unlocks. */
+function unlockEverything(): void {
+  useResearchStore.setState({ data: 0, completed: RESEARCH_TREE.map((node) => node.id), claimed: {} });
+}
+
 beforeEach(() => {
   useDefendStore.getState().reset();
+  unlockEverything();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

@@ -1,11 +1,13 @@
 import { getDefenseNodeCost, getIceSentryConfig, type BattleLog, type BlockTier, type SheetEvent } from "@payload/sim";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { NodeGlyph } from "../components/NodeGlyph.js";
 import { findActionEntry, findConditionEntry } from "../data/sheetCatalog.js";
 import { compileForMap, frameAt, playbackDurationSeconds } from "../logic/attackPlayback.js";
 import { runDefenseTest, type DefenseTestReport, type DefenseVerdict } from "../logic/defenseTest.js";
+import { baseResearchNodeIdForDefenseNode, isDefenseNodeUnlocked, unlocked } from "../logic/unlocks.js";
 import { useAppShellStore } from "../state/appShellStore.js";
+import { useResearchStore } from "../state/researchStore.js";
 import {
   CORE_COLOR,
   CORE_DESCRIPTION,
@@ -82,6 +84,17 @@ function nodeDescription(node: DefendNode): string {
   if (node.type === "core") return CORE_DESCRIPTION;
   if (node.type === "entry") return ENTRY_DESCRIPTION;
   return findNodeTierDescription(findPlaceableEntry(node.type), node.tier);
+}
+
+/** A stable fingerprint of a layout's shape — type, tier, and rounded position of every node,
+ * sorted so nodes in a different draw order still hash the same. Not cryptographic, just
+ * deterministic dedup: keys the one-time-per-layout gauntlet Data reward (PLAN.md §C.3) so
+ * repeatedly tapping "Uji pertahanan" on the same build doesn't pay out more than once. */
+function layoutFingerprint(nodes: readonly DefendNode[]): string {
+  return nodes
+    .map((node) => `${node.type}:${node.tier ?? 0}:${Math.round(node.x / 10)}:${Math.round(node.y / 10)}`)
+    .sort()
+    .join("|");
 }
 
 /** The world rectangle every node's silhouette fits inside — what the opening camera frames. */
@@ -282,6 +295,10 @@ interface CameraGestureState {
 }
 
 export function Defend(): JSX.Element {
+  const navigate = useNavigate();
+  const researchCompleted = useResearchStore((state) => state.completed);
+  const claimOnce = useResearchStore((state) => state.claimOnce);
+  const unlockedState = useMemo(() => unlocked(researchCompleted), [researchCompleted]);
   const nodes = useDefendStore((state) => state.nodes);
   const zoom = useDefendStore((state) => state.zoom);
   const offsetX = useDefendStore((state) => state.offsetX);
@@ -544,9 +561,15 @@ export function Defend(): JSX.Element {
     setTestReport(null);
     clearSelection();
     requestAnimationFrame(() => {
-      const report = runDefenseTest(useDefendStore.getState().nodes);
+      const currentNodes = useDefendStore.getState().nodes;
+      const report = runDefenseTest(currentNodes);
       setTestReport(report);
       setTesting(false);
+      // PLAN.md §C.3: a layout only pays out once, the first time it proves breachable — so the
+      // reward is for building something beatable, not for re-running the same test.
+      if (report.verdict === "breachable") {
+        claimOnce(`layout:${layoutFingerprint(currentNodes)}`, 200);
+      }
       // Straight into the battle on the map — the numbers alone don't show how they got in.
       startPlayback(report);
     });
@@ -575,9 +598,15 @@ export function Defend(): JSX.Element {
   }
 
   /** Drops the picked type in the middle of whatever the camera is currently looking at — the
-   * screen centre converted back into world coordinates. */
+   * screen centre converted back into world coordinates. Entry/Core are structural and never gated
+   * (PLAN.md 8.7) — only PLACEABLE_NODE_CATALOG's defensive hardware goes through research. */
   function handlePickNodeType(type: PlaceableNodeType, tiered: boolean): void {
     setPickerOpen(false);
+    if (type !== "entry" && type !== "core" && !isDefenseNodeUnlocked(unlockedState, type, 1)) {
+      const nodeId = baseResearchNodeIdForDefenseNode(type, 1);
+      navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+      return;
+    }
     if (viewportSize.width <= 0 || viewportSize.height <= 0) {
       return;
     }
@@ -1034,6 +1063,7 @@ export function Defend(): JSX.Element {
               {PICKER_CATALOG.map((entry) => {
                 const cost = nodeCostPt({ type: entry.type, ...(entry.tiered ? { tier: 1 as const } : {}) });
                 const affordable = cost <= budgetRemaining;
+                const isLocked = entry.type !== "entry" && entry.type !== "core" && !isDefenseNodeUnlocked(unlockedState, entry.type, 1);
                 return (
                   <button
                     key={entry.type}
@@ -1041,16 +1071,20 @@ export function Defend(): JSX.Element {
                     data-testid="defend-picker-entry"
                     data-node-type={entry.type}
                     data-affordable={affordable}
+                    data-locked={isLocked}
                     className="payload-modal-card"
                     style={{ borderColor: entry.color }}
                     disabled={!affordable}
-                    title={affordable ? undefined : `Butuh ${cost} pt, sisa ${budgetRemaining} pt`}
+                    title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : affordable ? undefined : `Butuh ${cost} pt, sisa ${budgetRemaining} pt`}
                     onClick={() => handlePickNodeType(entry.type, entry.tiered)}
                   >
                     <svg className="payload-modal-card-glyph" viewBox="0 0 40 40" aria-hidden="true">
                       <NodeGlyph shape={entry.shape} cx={20} cy={20} r={14} fill={entry.color} stroke="none" strokeWidth={0} />
                     </svg>
-                    <span>{entry.label}</span>
+                    <span>
+                      {isLocked ? "🔒 " : ""}
+                      {entry.label}
+                    </span>
                     <small>{cost}pt</small>
                   </button>
                 );

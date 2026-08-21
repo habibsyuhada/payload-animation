@@ -11,6 +11,7 @@ import {
   type OnceScope,
 } from "@payload/sim";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ACTION_CATALOG,
   CONDITION_CATALOG,
@@ -23,6 +24,8 @@ import {
   type ParamSpec,
 } from "../data/sheetCatalog.js";
 import { PRACTICE_DEFENSES } from "../data/practiceDefenses.js";
+import { baseResearchNodeIdForAction, baseResearchNodeIdForCondition, isActionUnlocked, isConditionUnlocked, unlocked, validateAgainstUnlocks } from "../logic/unlocks.js";
+import { useResearchStore } from "../state/researchStore.js";
 import { canNestUnder, toVirusProgram, useVirusLabStore, type ActionInstance, type ConditionInstance, type RowInstance } from "../state/virusLabStore.js";
 import { theme } from "../theme.js";
 import { Screen } from "./Screen.js";
@@ -330,25 +333,37 @@ function describeResult(result: BattleResult): string {
 }
 
 export function VirusLab(): JSX.Element {
+  const navigate = useNavigate();
   const rows = useVirusLabStore((state) => state.rows);
   const addRow = useVirusLabStore((state) => state.addRow);
   const addCondition = useVirusLabStore((state) => state.addCondition);
   const addAction = useVirusLabStore((state) => state.addAction);
+  const researchCompleted = useResearchStore((state) => state.completed);
+  const claimOnce = useResearchStore((state) => state.claimOnce);
+  const unlockedState = useMemo(() => unlocked(researchCompleted), [researchCompleted]);
   const [picker, setPicker] = useState<PickerRequest | null>(null);
   const [results, setResults] = useState<readonly { defenseId: string; label: string; result: BattleResult }[] | null>(null);
 
   const program = useMemo(() => toVirusProgram(rows), [rows]);
   const validation = useMemo(() => validateVirusProgram(program, RULESET_V2, ACCOUNT_TIER), [program]);
+  const unlockIssues = useMemo(() => validateAgainstUnlocks(program, unlockedState), [program, unlockedState]);
   const overBudget = validation.weightKb > TIER_CONFIG.payloadBudgetKb;
 
+  /** GDD §9's "simulasi kering mengalahkan pertahanan latihan baru" Data source — 80 Data the
+   * first time this exact practice defense is beaten, keyed per defense so re-running a dry
+   * simulation the player already won doesn't pay out twice. */
   const runDrySimulation = (): void => {
-    setResults(
-      PRACTICE_DEFENSES.map((practice, index) => ({
-        defenseId: practice.id,
-        label: practice.label,
-        result: simulate({ rulesetVersion: "v2", seed: PRACTICE_SEED_BY_DEFENSE_INDEX[index]!, virus: program, defense: practice.graph }).result,
-      })),
-    );
+    const runs = PRACTICE_DEFENSES.map((practice, index) => ({
+      defenseId: practice.id,
+      label: practice.label,
+      result: simulate({ rulesetVersion: "v2", seed: PRACTICE_SEED_BY_DEFENSE_INDEX[index]!, virus: program, defense: practice.graph }).result,
+    }));
+    setResults(runs);
+    for (const run of runs) {
+      if (run.result.winner === "attacker") {
+        claimOnce(`dry-simulation:${run.defenseId}`, 80);
+      }
+    }
   };
 
   return (
@@ -369,12 +384,20 @@ export function VirusLab(): JSX.Element {
         </p>
       </section>
 
-      {(validation.errors.length > 0 || validation.warnings.length > 0) && (
+      {(validation.errors.length > 0 || validation.warnings.length > 0 || unlockIssues.length > 0) && (
         <section data-testid="sheet-issues">
           <ul>
             {validation.errors.map((error) => (
               <li key={`${error.code}-${error.path ?? ""}`} data-testid="sheet-error" style={{ color: theme.faction.attack }}>
                 {error.message}
+              </li>
+            ))}
+            {/* Research-gating issues (PLAN.md 8.7, ADR 0009 §C) are a SEPARATE gate from sim's own
+            validateVirusProgram() — packages/sim stays ignorant of research — but read from the
+            same list on screen, since a player doesn't care which layer objected. */}
+            {unlockIssues.map((issue, index) => (
+              <li key={`${issue.code}-${issue.path}-${index}`} data-testid="sheet-error" style={{ color: theme.faction.attack }}>
+                {issue.message}
               </li>
             ))}
             {validation.warnings.map((warning) => (
@@ -408,7 +431,7 @@ export function VirusLab(): JSX.Element {
       </section>
 
       <section data-testid="dry-run">
-        <button type="button" data-testid="run-dry-simulation" className="payload-btn-primary" disabled={!validation.valid} onClick={runDrySimulation}>
+        <button type="button" data-testid="run-dry-simulation" className="payload-btn-primary" disabled={!validation.valid || unlockIssues.length > 0} onClick={runDrySimulation}>
           Simulasi Kering vs 3 Latihan
         </button>
         {results && (
@@ -428,44 +451,72 @@ export function VirusLab(): JSX.Element {
             <h2>{picker.mode === "condition" ? "Pilih Kondisi" : "Pilih Aksi"}</h2>
             <div className="payload-modal-grid">
               {picker.mode === "condition"
-                ? CONDITION_CATALOG.map((entry) => (
-                    <button
-                      key={entry.kind}
-                      type="button"
-                      className="payload-modal-card"
-                      data-testid="sheet-picker-entry"
-                      data-kind={entry.kind}
-                      style={{ borderColor: conditionColor(entry.kind) }}
-                      onClick={() => {
-                        addCondition(picker.rowId, entry.kind);
-                        setPicker(null);
-                      }}
-                    >
-                      <span>{entry.label}</span>
-                      <small>{entry.tiers ? `${entry.tiers[0]!.weightKb}+ KB` : `${conditionWeightKb(entry.kind, 1)} KB`}</small>
-                      <small className="payload-sheet-picker-summary">{entry.summary}</small>
-                    </button>
-                  ))
-                : ACTION_CATALOG.map((entry) => (
-                    <button
-                      key={entry.kind}
-                      type="button"
-                      className="payload-modal-card"
-                      data-testid="sheet-picker-entry"
-                      data-kind={entry.kind}
-                      style={{ borderColor: actionColor(entry.kind) }}
-                      onClick={() => {
-                        addAction(picker.rowId, entry.kind);
-                        setPicker(null);
-                      }}
-                    >
-                      <span>{entry.label}</span>
-                      <small>
-                        {entry.weightKb} KB{entry.isSlot ? " · slot" : ""}
-                      </small>
-                      <small className="payload-sheet-picker-summary">{entry.summary}</small>
-                    </button>
-                  ))}
+                ? CONDITION_CATALOG.map((entry) => {
+                    const isLocked = !isConditionUnlocked(unlockedState, entry.kind);
+                    return (
+                      <button
+                        key={entry.kind}
+                        type="button"
+                        className="payload-modal-card"
+                        data-testid="sheet-picker-entry"
+                        data-kind={entry.kind}
+                        data-locked={isLocked}
+                        style={{ borderColor: conditionColor(entry.kind) }}
+                        title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : undefined}
+                        onClick={() => {
+                          if (isLocked) {
+                            const nodeId = baseResearchNodeIdForCondition(entry.kind);
+                            setPicker(null);
+                            navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+                            return;
+                          }
+                          addCondition(picker.rowId, entry.kind);
+                          setPicker(null);
+                        }}
+                      >
+                        <span>
+                          {isLocked ? "🔒 " : ""}
+                          {entry.label}
+                        </span>
+                        <small>{entry.tiers ? `${entry.tiers[0]!.weightKb}+ KB` : `${conditionWeightKb(entry.kind, 1)} KB`}</small>
+                        <small className="payload-sheet-picker-summary">{entry.summary}</small>
+                      </button>
+                    );
+                  })
+                : ACTION_CATALOG.map((entry) => {
+                    const isLocked = !isActionUnlocked(unlockedState, entry.kind);
+                    return (
+                      <button
+                        key={entry.kind}
+                        type="button"
+                        className="payload-modal-card"
+                        data-testid="sheet-picker-entry"
+                        data-kind={entry.kind}
+                        data-locked={isLocked}
+                        style={{ borderColor: actionColor(entry.kind) }}
+                        title={isLocked ? "Belum diriset — ketuk untuk buka layar Riset" : undefined}
+                        onClick={() => {
+                          if (isLocked) {
+                            const nodeId = baseResearchNodeIdForAction(entry.kind);
+                            setPicker(null);
+                            navigate(nodeId ? `/research?focus=${nodeId}` : "/research");
+                            return;
+                          }
+                          addAction(picker.rowId, entry.kind);
+                          setPicker(null);
+                        }}
+                      >
+                        <span>
+                          {isLocked ? "🔒 " : ""}
+                          {entry.label}
+                        </span>
+                        <small>
+                          {entry.weightKb} KB{entry.isSlot ? " · slot" : ""}
+                        </small>
+                        <small className="payload-sheet-picker-summary">{entry.summary}</small>
+                      </button>
+                    );
+                  })}
             </div>
             <button type="button" data-testid="sheet-picker-close" onClick={() => setPicker(null)}>
               Tutup

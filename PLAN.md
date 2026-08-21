@@ -256,10 +256,19 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       `{ from: "shared", allow: ["sim"] }` — test kelengkapan (tiap `ConditionKind`/`ActionKind`
       dan pasangan node×tier tepat sekali di pohon), test tanpa siklus & tanpa id gantung, test
       starter set (Inti, depth 0) cukup untuk `validateVirusProgram()` meloloskan sheet tier 1.
-- [ ] **8.7** Riset di klien: `state/researchStore.ts`, `logic/unlocks.ts`, `screens/Research.tsx`
-      menggantikan placeholder, migrasi sekali-jalan untuk sheet/layout tersimpan, sumber Data di
-      Onboarding/Defend/VirusLab — test interaksi `@vitest/browser`: riset membuka item di picker,
-      item terkunci tak bisa dipakai, progres bertahan reload, sheet lama tetap legal.
+- [x] **8.7** Riset di klien: `state/researchStore.ts` (zustand + `persistStorage`, `research`/
+      `grantData`/`claimOnce`/`unlockNode`/`reset`), `logic/unlocks.ts` (`unlocked`, `isXUnlocked`
+      re-export, `validateAgainstUnlocks`, `starterCompletedIds`), `screens/Research.tsx`
+      menggantikan placeholder (tab cabang, daftar `depth`-terurut, prasyarat sebagai link fokus,
+      deep-link `?focus=`), migrasi sekali-jalan lewat `onRehydrateStorage` (Inti starter set +
+      kind yang dipakai sheet/layout tersimpan). Picker Virus Lab & Defend menampilkan item
+      terkunci (🔒, tap → `/research?focus=`). Sumber Data: Onboarding (120×5 + 1 simpul depth-1
+      per cabang diajarkan), Defend (200 sekali per layout-hash saat verdict `breachable`), Virus
+      Lab (80 sekali per pertahanan latihan dikalahkan Simulasi Kering) — semua lewat `claimOnce`.
+      Test interaksi `@vitest/browser`: `research-gating.test.tsx` (riset membuka item di picker,
+      item terkunci navigasi ke Riset alih-alih ditambahkan), `Research.test.tsx` (tab, riset,
+      unlock anak, link prasyarat, deep-link), `researchStore.test.ts` (spend/refuse, `claimOnce`
+      sekali-per-source, reload mempertahankan progres, migrasi membuat sheet lama tetap legal).
 - [ ] **8.8** `tools/balance-lab`: dukungan parameter baru di generator, arketipe node/virus baru,
       dimensi pita kedalaman riset di `dominance.ts`/`report.ts` — `known-dominance.ts` **kosong**,
       job CI `balance-dominance` hijau, `REPORT.md` ter-regenerasi per pita.

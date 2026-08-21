@@ -1,19 +1,36 @@
+import { RESEARCH_TREE } from "@payload/shared";
 import { page } from "@vitest/browser/context";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirusLab } from "../src/screens/VirusLab.js";
+import { useResearchStore } from "../src/state/researchStore.js";
 import { rowIdByRulePath, toVirusProgram, useVirusLabStore } from "../src/state/virusLabStore.js";
 
 let container: HTMLDivElement;
 let root: Root;
 
+/** These tests are about the editor and the v2 catalog, not about research gating (that lives in
+ * research-gating.test.tsx) — so the default fixture has everything researched, matching how the
+ * catalog behaved before PLAN.md 8.7 introduced unlocks. */
+function unlockEverything(): void {
+  useResearchStore.setState({ data: 0, completed: RESEARCH_TREE.map((node) => node.id), claimed: {} });
+}
+
 beforeEach(() => {
   useVirusLabStore.getState().reset();
+  unlockEverything();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  flushSync(() => root.render(<VirusLab />));
+  flushSync(() =>
+    root.render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <VirusLab />
+      </MemoryRouter>,
+    ),
+  );
 });
 
 afterEach(() => {
