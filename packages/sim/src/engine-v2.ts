@@ -31,10 +31,13 @@ import {
   getConditionRadiusHops,
   getConditionSpec,
   getDecoyConfigV2,
+  getDetonateConfigV2,
   getExploitDamageV2,
   getOverloadConfigV2,
   getSelfRepairHealPerTickV2,
   getSlowCrawlConfigV2,
+  getWormSplitConfigV2,
+  WORM_SPLIT_MIN_INTEGRITY_V2,
 } from "./ruleset-v2.js";
 import { sheetCanSplit, walkSheet } from "./sheet.js";
 import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, SheetAction, SheetCondition, SheetEvent } from "./types.js";
@@ -72,19 +75,26 @@ import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, Defe
  * 2. **Sheet evaluation** — per entity, depth-first, top to bottom, producing that entity's own
  *    plan of intents. Never consumes RNG (ADR 0006 §2).
  * 3. **Statuses** — per entity. Cloak / Slow Crawl take effect *before* anything shoots.
- * 4. **Node effects** — per entity: Attack actions against the Breach Node it occupies, the node's
- *    counter-damage (destroying a Breach Node can arm an Alarm Relay in range) → Alarm Relay
- *    proximity trigger (any entity) → ICE Sentry fire (sentries outer, ascending node id; each
- *    off-cooldown sentry targets the lowest-id living, uncloaked, in-range entity and takes
- *    exactly one draw — RNG) → Trap/Honeypot triggers (per entity) → Scanner aura (per entity) →
- *    Patch Server heal, LAST and entity-independent (it heals nodes, not bodies), so this tick's
- *    damage is still visible before any of it gets healed back.
+ * 4. **Node effects** — per entity: `detonate` resolves first (PLAN.md 8.3c) and, if it fires,
+ *    replaces the rest of this phase for that body entirely — it sacrifices its whole remaining
+ *    Integrity as one-shot damage to the occupied Breach Node and dies on the spot. Otherwise:
+ *    Attack actions against the Breach Node it occupies, the node's counter-damage (destroying a
+ *    Breach Node can arm an Alarm Relay in range) → Alarm Relay proximity trigger (any entity) →
+ *    ICE Sentry fire (sentries outer, ascending node id; each off-cooldown sentry targets the
+ *    lowest-id living, uncloaked, in-range entity and takes exactly one draw — RNG) → Trap/Honeypot
+ *    triggers (per entity) → Scanner aura (per entity) → Patch Server heal, LAST and
+ *    entity-independent (it heals nodes, not bodies), so this tick's damage is still visible before
+ *    any of it gets healed back.
  * 5. **Utility** — per entity: Self Repair, decoy arming.
  * 6. **Movement** — per entity, ascending id; move-random draws here. The winning intent is
  *    consumed at the END of the tick, so a body that arrives somewhere always gets one full tick
  *    of acting there before it can leave. Tarpit/Turnstile apply here.
- * 7. **`rule-fired`** — per entity ascending id, then that entity's own fired rule ids sorted —
- *    for every rule whose actions actually did something, then win/loss.
+ * H. **`worm-split` resolution** (PLAN.md 8.3c) — per entity, AFTER movement, so a new body never
+ *    acts on the tick it's born. Appended with a fresh, monotonically increasing id; never spliced
+ *    in. Refused below `WORM_SPLIT_MIN_INTEGRITY_V2` Integrity or at the tier's living-entity cap.
+ * 7. **`rule-fired`** — per entity ascending id (the tick-start snapshot — a body born this tick via
+ *    H does not appear here until next tick), then that entity's own fired rule ids sorted — for
+ *    every rule whose actions actually did something, then win/loss.
  *
  * Win/lose: attacker wins the instant `coreHp <= 0`, whichever body did it. Defender wins once
  * every entity has died. Score's `integrityRatioPermille` uses the MAXIMUM integrity among living
@@ -116,8 +126,10 @@ interface TickPlan {
   cloak: SlotWrite<BlockTier> | null;
   slowCrawl: SlotWrite<BlockTier> | null;
   decoy: SlotWrite<BlockTier> | null;
-  /** Written by `worm-split` (slot dispatch only — 8.3b). Consuming it into an actual new entity is 8.3c's job. */
+  /** Written by `worm-split`; resolved after movement (phase H, PLAN.md 8.3c). */
   split: SlotWrite<BlockTier> | null;
+  /** Written by `detonate`; resolved in node effects (phase 4a) before the regular occupancy attack. */
+  detonate: SlotWrite<BlockTier> | null;
   readonly bruteForce: Contribution[];
   readonly exploit: Contribution[];
   readonly overload: OverloadContribution[];
@@ -126,7 +138,7 @@ interface TickPlan {
 }
 
 function emptyPlan(): TickPlan {
-  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
+  return { movement: null, cloak: null, slowCrawl: null, decoy: null, split: null, detonate: null, bruteForce: [], exploit: [], overload: [], selfRepair: [], actionsRun: 0 };
 }
 
 interface DecoyState {
@@ -165,6 +177,9 @@ interface VirusEntity {
   scannedUntilTick: number | null;
   scannedAccuracyBonusPermille: number;
   honeypotPendingDeathTick: number | null;
+  /** Set by `detonate` (PLAN.md 8.3c): this body's death is a deliberate sacrifice, so `set-checkpoint`
+   * (8.3d) must never bring it back. Plumbing ahead of 8.3d — nothing reads it yet. */
+  noRespawn: boolean;
 }
 
 interface BattleStateV2 {
@@ -173,6 +188,10 @@ interface BattleStateV2 {
   readonly firewallHp: Map<number, number>;
   readonly destroyedFirewallIds: Set<number>;
   readonly spentTrapIds: Set<number>;
+  /** GLOBAL, same as `spentTrapIds` (PLAN.md 8.3c decision, worth stating explicitly now that a
+   * second body can reach the same node): a Honeypot that has already sprung on one body is spent
+   * for everyone, so a second body arriving later walks through safely — consistent with Trap, and
+   * meaning one body's honeypot kill no longer also pins down every OTHER body that visits it. */
   readonly triggeredHoneypotIds: Set<number>;
   readonly iceNextFireTick: Map<number, number>;
   firewallsDestroyed: number;
@@ -387,6 +406,10 @@ function applyAction(action: SheetAction, ruleId: string, plan: TickPlan): void 
     plan.split = writeSlot(plan.split, ruleId, tier);
     return;
   }
+  if (spec.slot === "detonate") {
+    plan.detonate = writeSlot(plan.detonate, ruleId, tier);
+    return;
+  }
   if (kind === "brute-force") {
     plan.bruteForce.push({ ruleId, amount: getBruteForceDamagePerTickV2(tier) });
   } else if (kind === "exploit") {
@@ -528,7 +551,10 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     scannedUntilTick: null,
     scannedAccuracyBonusPermille: 0,
     honeypotPendingDeathTick: null,
+    noRespawn: false,
   };
+  /** Append-only, ascending, never reused (PLAN.md 8.3a: entities are never spliced). */
+  let nextEntityId = 1;
 
   const state: BattleStateV2 = {
     entities: [firstEntity],
@@ -676,6 +702,44 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     // --- 4a. Node effects: occupancy (attack/counter/destroy/splash), per entity ---
     for (const w of work) {
       const { entity, plan } = w;
+
+      // Detonate (PLAN.md 8.3c): a one-shot sacrifice, resolved before this body's own occupancy
+      // attack/counter-damage — the body is deliberately gone this tick, so nothing else it would
+      // have done this tick (brute-force, exploit, taking counter-damage) still applies.
+      if (plan.detonate && !entity.died) {
+        const config = getDetonateConfigV2(plan.detonate.value);
+        const damage = applyPermille(entity.integrity, config.damageMultiplierPermille);
+        if (entity.location.kind === "node") {
+          const node = findNode(graph, entity.location.nodeId);
+          if (node.type === "firewall" && !state.destroyedFirewallIds.has(node.id)) {
+            const currentHp = state.firewallHp.get(node.id) ?? firewallMaxHpV2(requireTier(node));
+            const newHp = Math.max(0, currentHp - damage);
+            state.firewallHp.set(node.id, newHp);
+            events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -(currentHp - newHp), ...(canSplit ? { entityId: entity.id } : {}) });
+            if (newHp <= 0) {
+              state.destroyedFirewallIds.add(node.id);
+              state.firewallsDestroyed += 1;
+              events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id), ...(canSplit ? { entityId: entity.id } : {}) });
+              triggerAlarmsNear(node.id);
+            }
+          } else if (node.type === "core" && state.coreHp > 0) {
+            const newHp = Math.max(0, state.coreHp - damage);
+            const drained = state.coreHp - newHp;
+            state.coreHp = newHp;
+            if (drained > 0) {
+              events.push({ tick, type: "node-damaged", actor: "virus", target: String(node.id), delta: -drained, ...(canSplit ? { entityId: entity.id } : {}) });
+            }
+          }
+        }
+        w.firedRuleIds.add(plan.detonate.ruleId);
+        const dealt = damageVirus(entity, entity.integrity);
+        if (dealt > 0) {
+          events.push({ tick, type: "virus-damaged", actor: "detonate", target: "virus", delta: -dealt, ...(canSplit ? { entityId: entity.id } : {}) });
+        }
+        entity.noRespawn = true;
+        continue;
+      }
+
       w.bruteForceDamage = plan.bruteForce.reduce((sum, contribution) => sum + contribution.amount, 0);
       w.exploitDamage = entity.freshArrival ? plan.exploit.reduce((sum, contribution) => sum + contribution.amount, 0) : 0;
       const bruteForceDamage = w.bruteForceDamage;
@@ -991,6 +1055,54 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           }
         }
       }
+    }
+
+    // --- H. Worm Split resolution, per entity (work's own ascending-id order), AFTER movement so a
+    // new body never acts on the tick it's born (RULESET.md §11a, PLAN.md 8.3c) — it joins `work`
+    // for the first time next tick. New bodies get monotonically increasing ids, appended (never
+    // spliced in, per 8.3a), and their own fresh physical status (no inherited cloak/scan window,
+    // no inherited decoy shield): only "program memory" carries over — `firedOnceKeys` (a copy, not
+    // the same Set, so each body's `once` bookkeeping is independent from here on) and
+    // `decoy.activationsUsed` (so a body can't dodge its own charge limit by splitting), never
+    // `decoy.absorbsRemaining` (an armed shield protects the body it's armed on). The split entity's
+    // own Integrity is reduced to the same share the new body gets — "masing-masing", not "the
+    // leftover after the new body's cut".
+    for (const w of work) {
+      const { entity, plan } = w;
+      if (!plan.split || entity.died) {
+        continue;
+      }
+      const config = getWormSplitConfigV2(plan.split.value);
+      if (entity.integrity < WORM_SPLIT_MIN_INTEGRITY_V2 || livingEntities().length >= config.maxLivingEntities) {
+        continue;
+      }
+      const sharedIntegrity = applyPermille(entity.integrity, config.integritySharePermille);
+      entity.integrity = sharedIntegrity;
+      const clone: VirusEntity = {
+        id: nextEntityId,
+        location: entity.location,
+        integrity: sharedIntegrity,
+        died: false,
+        damageTakenThisTick: 0,
+        damageTakenLastTick: 0,
+        cloakUntilTick: 0,
+        cloakReadyAtTick: 0,
+        decoy: { activationsUsed: entity.decoy.activationsUsed, absorbsRemaining: 0 },
+        firedOnceKeys: new Set(entity.firedOnceKeys),
+        arrivalCount: 0,
+        previousNodeId: null,
+        freshArrival: true,
+        queuedMovement: null,
+        triedEdgesFromNode: new Map(),
+        scannedUntilTick: null,
+        scannedAccuracyBonusPermille: 0,
+        honeypotPendingDeathTick: null,
+        noRespawn: false,
+      };
+      state.entities.push(clone);
+      w.firedRuleIds.add(plan.split.ruleId);
+      events.push({ tick, type: "virus-split", actor: String(entity.id), target: String(clone.id), ...(canSplit ? { entityId: entity.id } : {}) });
+      nextEntityId += 1;
     }
 
     // --- 7. rule-fired (entity ascending id, then that entity's own fired rule ids sorted), then win/loss ---

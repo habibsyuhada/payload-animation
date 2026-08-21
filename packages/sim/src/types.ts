@@ -91,7 +91,8 @@ export type ActionKind =
   | "self-repair"
   | "arm-decoy"
   // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c/8.3d).
-  | "worm-split";
+  | "worm-split"
+  | "detonate";
 
 /**
  * How often an event may fire.
@@ -214,7 +215,12 @@ export type BattleEventType =
   | "battle-won"
   /** v2 only (ADR 0006 §6): an event whose actions actually had an effect this tick. `actor` is
    * the event's id or path, which is what lets a replay light up the rule that fired. */
-  | "rule-fired";
+  | "rule-fired"
+  /** v2 only, multi-entity (PLAN.md 8.3c): a `worm-split` action resolved. `entityId` is the body
+   * that split (always present — this event can only exist when its sheet's `sheetCanSplit()` is
+   * true), `target` is the new body's id. Reuses no other event type because "one body is now two,
+   * both possibly at reduced Integrity" isn't a damage/repair/move on any single body. */
+  | "virus-split";
 
 export interface BattleEvent {
   readonly tick: number;

@@ -223,7 +223,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.3b** `entityId?: number` di `BattleEvent` + gerbang statis `sheetCanSplit()` di `sheet.ts`
       (idiom spread bersyarat, bukan `entityId: undefined`) — hash tetap untuk sheet lama; sheet
       split menghasilkan `entityId` di tiap event sejak tick 0.
-- [ ] **8.3c** Aksi `worm-split` + `detonate`: cabang mewarisi salinan `firedOnceKeys` &
+- [x] **8.3c** Aksi `worm-split` + `detonate`: cabang mewarisi salinan `firedOnceKeys` &
       `decoy.activationsUsed`, `triggeredHoneypotIds` tetap global — test menang/kalah multi-entitas,
       test dua cabang identik menyimpang di `move-random`.
 - [ ] **8.3d** Aksi `set-checkpoint`: respawn mengonsumsi `died` (bukan memintasnya), invariant

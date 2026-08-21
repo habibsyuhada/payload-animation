@@ -70,6 +70,55 @@ const QUIET_LINE: DefenseGraph = {
   coreHp: 400,
 };
 
+/** Entry 1 -> hub Router 2 -> three branches (Entry backward, Router 3, Router 4). Nothing here can
+ * hurt the virus — used to isolate move-random's per-entity divergence from any combat noise. */
+const SPLIT_HUB: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "router"), node(4, "router"), node(5, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 2, to: 4, lengthDu: 300 },
+    { from: 3, to: 5, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 5,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Firewall A (short) or Router -> Firewall B (longer, via a detour) -> Core 5. Both
+ * Firewalls are tier I and never get attacked in these tests, so whichever body wanders into
+ * either one is pinned there and dies to counter-damage alone — the two paths differ in length so
+ * two split bodies wandering independently reach their firewall (and so their death) at different
+ * ticks. */
+const SPLIT_TWO_FIREWALLS: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "firewall", 1), node(3, "router"), node(4, "firewall", 1), node(5, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 100 },
+    { from: 1, to: 3, lengthDu: 100 },
+    { from: 3, to: 4, lengthDu: 400 },
+    { from: 2, to: 5, lengthDu: 100 },
+    { from: 4, to: 5, lengthDu: 100 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 5,
+  coreHp: 400,
+};
+
+/** Entry 1 -> Router 2 (split point) -> Honeypot 3 -> Core 4. Deterministic move-toward-core for
+ * both bodies, so they arrive at the Honeypot on the identical tick — proof that the SECOND body
+ * to be processed that same tick sees the Honeypot already spent (PLAN.md 8.3c). */
+const SPLIT_THEN_HONEYPOT: DefenseGraph = {
+  nodes: [node(1, "entry"), node(2, "router"), node(3, "honeypot", 1), node(4, "core")],
+  edges: [
+    { from: 1, to: 2, lengthDu: 300 },
+    { from: 2, to: 3, lengthDu: 300 },
+    { from: 3, to: 4, lengthDu: 300 },
+  ],
+  entryNodeIds: [1],
+  coreNodeId: 4,
+  coreHp: 400,
+};
+
 function battle(events: readonly SheetEvent[], defense: DefenseGraph = FIREWALL_LINE, seed = 7): BattleLog {
   const input: BattleInputV2 = { rulesetVersion: "v2", seed, virus: { events }, defense };
   return simulate(input);
@@ -348,17 +397,122 @@ describe("entityId gating (8.3b)", () => {
   });
 
   it("stamps entityId on every entity-specific event, including tick 0, for a sheet containing worm-split", () => {
-    // worm-split writes the split slot but 8.3c is what actually consumes it into a new body —
-    // here it only needs to make sheetCanSplit() true and prove the gate is static, not behavioral.
+    // This sheet actually splits (8.3c), so the log carries two bodies' worth of events — entity 0
+    // from tick 0 onward, entity 1 from the tick after it's born.
     const log = battle([row({ actions: [{ kind: "worm-split", tier: 1 }, { kind: "move-toward-core" }] })]);
     const entitySpecific = log.events.filter(isEntitySpecific);
     expect(entitySpecific.length).toBeGreaterThan(0);
     expect(entitySpecific[0]!.tick).toBe(0);
+    expect(entitySpecific[0]!.entityId).toBe(0);
     for (const event of entitySpecific) {
-      expect(event.entityId).toBe(0);
+      expect(typeof event.entityId).toBe("number");
     }
+    expect(entitySpecific.some((event) => event.entityId === 1)).toBe(true);
     for (const event of log.events.filter((candidate) => !isEntitySpecific(candidate))) {
       expect("entityId" in event).toBe(false);
     }
+  });
+});
+
+describe("detonate (8.3c)", () => {
+  it("sacrifices the body's whole remaining Integrity as one-shot damage to the occupied Breach Node, then dies", () => {
+    const log = battle([
+      row({ once: "battle", conditions: [{ kind: "on-breach-node" }], actions: [{ kind: "detonate", tier: 1 }] }),
+      row({ actions: [{ kind: "move-toward-core" }] }),
+    ]);
+    expect(log.result.winner).toBe("defender");
+    const destroyed = log.events.find((event) => event.type === "node-destroyed" && event.target === "3");
+    expect(destroyed).toBeDefined();
+    const nodeDamage = log.events.find((event) => event.type === "node-damaged" && event.target === "3" && event.tick === destroyed!.tick);
+    expect(nodeDamage!.delta).toBe(-500); // the firewall's full HP, clamped — 2000‰ of 1000 Integrity is massive overkill.
+    const selfDamage = log.events.find((event) => event.type === "virus-damaged" && event.actor === "detonate");
+    expect(selfDamage).toBeDefined();
+    expect(selfDamage!.delta).toBe(-1000); // its entire starting Integrity, gone in one tick.
+    expect(selfDamage!.tick).toBe(destroyed!.tick);
+    expect(log.events.some((event) => event.type === "virus-died" && event.tick === destroyed!.tick)).toBe(true);
+  });
+});
+
+describe("worm-split (8.3c)", () => {
+  it("leaves a spent Honeypot spent for every body — a second entity arriving the same tick walks through safely (RULESET.md §14)", () => {
+    const log = battle(
+      [
+        row({ once: "battle", conditions: [{ kind: "node-here-is", targetNodeTypes: ["router"] }], actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }),
+        row({ actions: [{ kind: "move-toward-core" }] }),
+      ],
+      SPLIT_THEN_HONEYPOT,
+      5,
+    );
+    // Both bodies arrive at the Honeypot on the same tick (deterministic move-toward-core, born
+    // from identical state) — entity 0 (processed first) springs it and dies; entity 1 (processed
+    // second, same tick) sees it already spent and is never even slowed down by it.
+    const honeypotDamage = log.events.filter((event) => event.type === "virus-damaged" && event.actor === "3");
+    expect(honeypotDamage).toHaveLength(1);
+    expect(honeypotDamage[0]!.entityId).toBe(0);
+    const entity1AtHoneypot = log.events.filter((event) => (event.type === "virus-entered-node" || event.type === "virus-departed-node") && event.target === "3" && event.entityId === 1);
+    expect(entity1AtHoneypot.map((event) => event.type)).toEqual(["virus-entered-node", "virus-departed-node"]);
+    // Entity 1 lives on well past entity 0's death, proving it truly took no damage there.
+    expect(log.events.some((event) => event.entityId === 1 && event.tick > honeypotDamage[0]!.tick)).toBe(true);
+  });
+
+  it("creates a second body sharing the same sheet, each at a share of the pre-split Integrity", () => {
+    const log = battle([row({ once: "battle", actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }), row({ actions: [{ kind: "move-random" }] })], SPLIT_HUB, 11);
+    const split = log.events.find((event) => event.type === "virus-split");
+    expect(split).toBeDefined();
+    expect(split!.actor).toBe("0");
+    expect(split!.target).toBe("1");
+    expect(split!.entityId).toBe(0);
+    // Both bodies now carry entityId on their own events — proof the second body is a real,
+    // independently-tracked entity, not a label on the same one.
+    expect(log.events.some((event) => event.type === "virus-entered-node" && event.entityId === 1)).toBe(true);
+  });
+
+  it("wins for the attacker the instant Core is zeroed, however many split bodies contributed", () => {
+    const log = battle([
+      row({ once: "battle", conditions: [{ kind: "on-breach-node" }], actions: [{ kind: "worm-split", tier: 1 }] }),
+      row({ actions: [{ kind: "brute-force", tier: 3 }, { kind: "move-toward-core" }] }),
+    ]);
+    expect(log.result.winner).toBe("attacker");
+    expect(log.events.some((event) => event.type === "virus-split")).toBe(true);
+    expect(log.events.some((event) => event.type === "virus-entered-node" && event.entityId === 1)).toBe(true);
+    const won = log.events.find((event) => event.type === "battle-won")!;
+    expect(won).toBeDefined();
+    expect("entityId" in won).toBe(false); // battle-level, regardless of which body(s) did it.
+  });
+
+  it("keeps the battle going once one split body dies, and the defender wins only once BOTH have (RULESET.md §11a)", () => {
+    const log = battle(
+      [row({ once: "battle", actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }), row({ actions: [{ kind: "move-random" }] })],
+      SPLIT_TWO_FIREWALLS,
+      31,
+    );
+    expect(log.result.winner).toBe("defender");
+    const damageTicksFor = (entityId: number): number[] => log.events.filter((event) => event.type === "virus-damaged" && event.entityId === entityId).map((event) => event.tick);
+    const lastDamage0 = Math.max(...damageTicksFor(0));
+    const lastDamage1 = Math.max(...damageTicksFor(1));
+    // The two bodies wandered to different Firewalls (SPLIT_TWO_FIREWALLS) and so die at different
+    // ticks — proving the battle-ending check is genuinely gated on ALL bodies, not just the first.
+    expect(lastDamage0).toBeLessThan(lastDamage1);
+    // Nothing about entity 0 appears after its own death — it is well and truly gone, not lingering.
+    expect(log.events.some((event) => event.entityId === 0 && event.tick > lastDamage0)).toBe(false);
+    // The battle-level death only fires once entity 1 (the survivor) also dies.
+    const battleDeath = log.events.find((event) => event.type === "virus-died")!;
+    expect(battleDeath.tick).toBe(lastDamage1);
+    expect("entityId" in battleDeath).toBe(false);
+  });
+
+  it("draws move-random for each entity in ascending-id order, so two clones with identical state at the same node can diverge", () => {
+    // entity 0 splits while pinned at Firewall A, entity 1 wanders off to Router 3 and Firewall B —
+    // proof the two independently-tracked RNG draws (entity 0 first, then entity 1, same shared
+    // stream) really did produce different outcomes, not just different entity ids on one path.
+    const log = battle(
+      [row({ once: "battle", actions: [{ kind: "worm-split", tier: 1 }, { kind: "hold-position" }] }), row({ actions: [{ kind: "move-random" }] })],
+      SPLIT_TWO_FIREWALLS,
+      31,
+    );
+    const firstMoveTarget = (entityId: number): string | undefined =>
+      log.events.find((event) => event.type === "virus-entered-node" && event.entityId === entityId && event.tick > 0)?.target;
+    expect(firstMoveTarget(0)).toBe("2");
+    expect(firstMoveTarget(1)).toBe("3");
   });
 });

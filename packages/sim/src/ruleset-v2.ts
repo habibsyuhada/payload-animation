@@ -94,7 +94,7 @@ export const CONDITION_SPECS_V2: readonly ConditionSpec[] = [
  * tick — the sheet reads top-down as a priority list, so a generic `[always] -> Move toward Core`
  * at the bottom must not overwrite the reaction above it.
  */
-export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split";
+export type ActionSlot = "movement" | "cloak" | "slow-crawl" | "decoy" | "split" | "detonate";
 
 export interface ActionSpec {
   readonly kind: ActionKind;
@@ -125,6 +125,10 @@ export const ACTION_SPECS_V2: readonly ActionSpec[] = [
   // 3) bodies sharing the same sheet. Slot "split" — only the first split row to fire in a tick
   // takes effect, same first-writer-wins rule as every other slot (ADR 0006 §3).
   { kind: "worm-split", category: "utility", weightKbByTier: { 1: 1100, 2: 1300, 3: 1500 }, slot: "split" },
+  // v2-only, multi-entity (RULESET.md §14, PLAN.md 8.3c): sacrifices this body's entire remaining
+  // Integrity as one-shot damage to the Breach Node it occupies, then dies — a slot (not
+  // cumulative) since detonating twice in one tick is meaningless, the body is only ever "gone" once.
+  { kind: "detonate", category: "attack", weightKbByTier: { 1: 900, 2: 1100, 3: 1300 }, slot: "detonate" },
 ];
 
 export function getConditionSpec(kind: ConditionKind): ConditionSpec {
@@ -242,6 +246,43 @@ const DECOY_CONFIG_V2: Readonly<Record<BlockTier, DecoyConfigV2>> = {
 
 export function getDecoyConfigV2(tier: BlockTier): DecoyConfigV2 {
   return DECOY_CONFIG_V2[tier];
+}
+
+interface WormSplitConfigV2 {
+  /** How many LIVING bodies may exist at once for a split at this tier to be allowed — checked at
+   * the moment the split resolves (PLAN.md 8.3c), not a total-ever-created count. */
+  readonly maxLivingEntities: number;
+  /** ‰ of the splitting body's pre-split Integrity that EACH resulting body ends up with —
+   * "masing-masing", the original body included, not "the new body gets a slice of what's left". */
+  readonly integritySharePermille: number;
+}
+
+const WORM_SPLIT_CONFIG_V2: Readonly<Record<BlockTier, WormSplitConfigV2>> = {
+  1: { maxLivingEntities: 2, integritySharePermille: 500 },
+  2: { maxLivingEntities: 2, integritySharePermille: 600 },
+  3: { maxLivingEntities: 3, integritySharePermille: 650 },
+};
+
+export function getWormSplitConfigV2(tier: BlockTier): WormSplitConfigV2 {
+  return WORM_SPLIT_CONFIG_V2[tier];
+}
+
+/** A split is refused below this much remaining Integrity (RULESET.md §14, PLAN.md 8.3c) — otherwise a body could split itself down to bodies too small to survive a single hit. */
+export const WORM_SPLIT_MIN_INTEGRITY_V2 = 200;
+
+interface DetonateConfigV2 {
+  /** ‰ of the detonating body's remaining Integrity dealt as damage to the Breach Node it occupies. */
+  readonly damageMultiplierPermille: number;
+}
+
+const DETONATE_CONFIG_V2: Readonly<Record<BlockTier, DetonateConfigV2>> = {
+  1: { damageMultiplierPermille: 2000 },
+  2: { damageMultiplierPermille: 2500 },
+  3: { damageMultiplierPermille: 3000 },
+};
+
+export function getDetonateConfigV2(tier: BlockTier): DetonateConfigV2 {
+  return DETONATE_CONFIG_V2[tier];
 }
 
 /** Default threshold for "integrity-below" when a row doesn't carry one (matches v1's tier I). */

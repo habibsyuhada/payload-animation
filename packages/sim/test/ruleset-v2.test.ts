@@ -52,6 +52,7 @@ const ALL_ACTION_KINDS: readonly ActionKind[] = [
   "self-repair",
   "arm-decoy",
   "worm-split",
+  "detonate",
 ];
 
 const TIERS: readonly BlockTier[] = [1, 2, 3];
@@ -80,10 +81,13 @@ describe("v2 catalog coverage", () => {
     expect(movementSlotted).toEqual(ACTION_SPECS_V2.filter((spec) => spec.category === "movement").map((spec) => spec.kind));
   });
 
-  it("gives the attack actions no slot at all — they are the cumulative ones", () => {
-    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack")) {
+  it("gives the attack actions no slot at all — they are the cumulative ones, except the one that isn't", () => {
+    // `detonate` (PLAN.md 8.3c) is the one deliberate exception: a one-shot self-sacrifice, not
+    // something that stacks, so it takes a slot like every other non-repeatable action.
+    for (const spec of ACTION_SPECS_V2.filter((candidate) => candidate.category === "attack" && candidate.kind !== "detonate")) {
       expect(spec.slot).toBeUndefined();
     }
+    expect(getActionSpec("detonate").slot).toBe("detonate");
     expect(getActionSpec("self-repair").slot).toBeUndefined();
   });
 
