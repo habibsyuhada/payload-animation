@@ -1,4 +1,4 @@
-import { EDGE_LENGTH_MIN_DU, getAccountTierConfig, getDefenseNodeCost, RULESET_V1, type BlockTier, type DefenseNodeType } from "@payload/sim";
+import { EDGE_LENGTH_MIN_DU, getAccountTierConfig, getDefenseNodeCostV2, RULESET_V2, type BlockTier, type DefenseNodeType } from "@payload/sim";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { persistStorage, storageKey } from "./localPersist.js";
@@ -60,8 +60,10 @@ export const ENTRY_COST_PT = 1;
 export const CORE_COST_PT = 3;
 
 /** The whole build allowance, straight from the ruleset's account-tier table (no account system
- * yet — Fase 4/5 — so tier 1, the same placeholder the other screens use). */
-export const DEFENSE_BUDGET_PT = getAccountTierConfig(RULESET_V1, 1).defenseBudgetPoints;
+ * yet — Fase 4/5 — so tier 1, the same placeholder the other screens use). RULESET_V2 because the
+ * page's actual battle test (logic/defenseTest.ts) already runs ruleset v2 — the number itself is
+ * identical to v1's (RULESET.md's v2 preamble: budgets are unchanged), only the provenance differs. */
+export const DEFENSE_BUDGET_PT = getAccountTierConfig(RULESET_V2, 1).defenseBudgetPoints;
 
 /** A graph always needs a way in and something to defend, so the last of either can't be deleted. */
 export const MIN_ENTRY_COUNT = 1;
@@ -104,11 +106,13 @@ export function linksFor(nodes: readonly DefendNode[]): readonly NodeLink[] {
 }
 
 /** What this node costs out of the defense budget. Entry/Core use the page's own prices (see
- * ENTRY_COST_PT); everything else is priced by the ruleset itself. */
+ * ENTRY_COST_PT); everything else is priced by the ruleset itself. getDefenseNodeCostV2 (not the
+ * v1 function) because this page's node types include the five v2-only ones (RULESET.md §14) that
+ * v1's table has never heard of. */
 export function nodeCostPt(node: Pick<DefendNode, "type" | "tier">): number {
   if (node.type === "entry") return ENTRY_COST_PT;
   if (node.type === "core") return CORE_COST_PT;
-  return getDefenseNodeCost(node.type, node.tier);
+  return getDefenseNodeCostV2(node.type, node.tier);
 }
 
 export function spentPt(nodes: readonly DefendNode[]): number {

@@ -287,6 +287,22 @@ const DEFENSE_NODE_COSTS_V2: readonly DefenseNodeCostEntryV2[] = [
   { type: "trap", tier: 1, costPoints: 2 },
   { type: "trap", tier: 2, costPoints: 3 },
   { type: "trap", tier: 3, costPoints: 5 },
+  // Five v2-only node types (RULESET.md §14, ADR 0007 §A) — 8.2a.
+  { type: "patch-server", tier: 1, costPoints: 3 },
+  { type: "patch-server", tier: 2, costPoints: 4 },
+  { type: "patch-server", tier: 3, costPoints: 6 },
+  { type: "tarpit", tier: 1, costPoints: 2 },
+  { type: "tarpit", tier: 2, costPoints: 3 },
+  { type: "tarpit", tier: 3, costPoints: 4 },
+  { type: "jammer", tier: 1, costPoints: 3 },
+  { type: "jammer", tier: 2, costPoints: 4 },
+  { type: "jammer", tier: 3, costPoints: 6 },
+  { type: "turnstile", tier: 1, costPoints: 2 },
+  { type: "turnstile", tier: 2, costPoints: 3 },
+  { type: "turnstile", tier: 3, costPoints: 4 },
+  { type: "alarm", tier: 1, costPoints: 4 },
+  { type: "alarm", tier: 2, costPoints: 5 },
+  { type: "alarm", tier: 3, costPoints: 7 },
 ];
 
 export function getDefenseNodeCostV2(type: DefenseNodeType, tier?: BlockTier): number {
@@ -368,3 +384,111 @@ const TRAP_DAMAGE_V2: Readonly<Record<BlockTier, number>> = { 1: 180, 2: 260, 3:
 export function getTrapDamageV2(tier: BlockTier): number {
   return TRAP_DAMAGE_V2[tier];
 }
+
+/*
+ * --- Five v2-only node types (RULESET.md §14, ADR 0007 §A) — 8.2a ---
+ * Each answers an attacker archetype the six v1 node types don't: grind (Patch Server heals
+ * through it), slow-crawl-immune sprinting (Tarpit), sensor-reliant sheets (Jammer), backtracking
+ * (Turnstile), and escalation the sheet can't out-scan (Alarm Relay).
+ */
+
+interface PatchServerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly healPerTick: number;
+}
+
+const PATCH_SERVER_CONFIG_V2: readonly PatchServerConfigV2[] = [
+  { tier: 1, radiusHops: 1, healPerTick: 8 },
+  { tier: 2, radiusHops: 1, healPerTick: 12 },
+  { tier: 3, radiusHops: 2, healPerTick: 18 },
+];
+
+export function getPatchServerConfigV2(tier: BlockTier): PatchServerConfigV2 {
+  const entry = PATCH_SERVER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 patch-server config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface TarpitConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  /** Not additive with a second Tarpit in range — the strongest (lowest ‰) active one applies. */
+  readonly speedMultiplierPermille: number;
+}
+
+const TARPIT_CONFIG_V2: readonly TarpitConfigV2[] = [
+  { tier: 1, radiusHops: 1, speedMultiplierPermille: 600 },
+  { tier: 2, radiusHops: 1, speedMultiplierPermille: 500 },
+  { tier: 3, radiusHops: 2, speedMultiplierPermille: 400 },
+];
+
+export function getTarpitConfigV2(tier: BlockTier): TarpitConfigV2 {
+  const entry = TARPIT_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 tarpit config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface JammerConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  /** Tier III also falsifies `node-ahead-is` while jammed — not just the two sensor conditions. */
+  readonly jamsNodeAhead: boolean;
+}
+
+const JAMMER_CONFIG_V2: readonly JammerConfigV2[] = [
+  { tier: 1, radiusHops: 1, jamsNodeAhead: false },
+  { tier: 2, radiusHops: 2, jamsNodeAhead: false },
+  { tier: 3, radiusHops: 2, jamsNodeAhead: true },
+];
+
+export function getJammerConfigV2(tier: BlockTier): JammerConfigV2 {
+  const entry = JAMMER_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 jammer config for tier ${tier}`);
+  }
+  return entry;
+}
+
+interface TurnstileConfigV2 {
+  readonly lockoutTicks: number;
+}
+
+const TURNSTILE_CONFIG_V2: Readonly<Record<BlockTier, TurnstileConfigV2>> = {
+  1: { lockoutTicks: 40 },
+  2: { lockoutTicks: 70 },
+  3: { lockoutTicks: 110 },
+};
+
+export function getTurnstileConfigV2(tier: BlockTier): TurnstileConfigV2 {
+  return TURNSTILE_CONFIG_V2[tier];
+}
+
+interface AlarmConfigV2 {
+  readonly tier: BlockTier;
+  readonly radiusHops: number;
+  readonly alertDurationTicks: number;
+}
+
+const ALARM_CONFIG_V2: readonly AlarmConfigV2[] = [
+  { tier: 1, radiusHops: 1, alertDurationTicks: 120 },
+  { tier: 2, radiusHops: 2, alertDurationTicks: 180 },
+  { tier: 3, radiusHops: 2, alertDurationTicks: 240 },
+];
+
+export function getAlarmConfigV2(tier: BlockTier): AlarmConfigV2 {
+  const entry = ALARM_CONFIG_V2.find((candidate) => candidate.tier === tier);
+  if (!entry) {
+    throw new Error(`no v2 alarm config for tier ${tier}`);
+  }
+  return entry;
+}
+
+/** The alert's boost to every ICE Sentry on the map, RULESET.md §14 — flat across tiers; only
+ * radius and duration scale with Alarm Relay's own tier. */
+export const ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS = 1;
+export const ALARM_ICE_ACCURACY_BONUS_PERMILLE = 100;

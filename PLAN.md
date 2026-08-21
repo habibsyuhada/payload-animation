@@ -210,7 +210,7 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
 - [x] **8.1d** `validateDefenseGraph` sadar-versi lewat `topologyRulesFor(ruleset)` + kode error
       `unsupported-node-type` + perbaiki bug laten `getDefenseNodeCost` yang melempar (jadi melapor)
       untuk tipe tak dikenal — 18 kasus `graph.test.ts` hijau tanpa diedit, kasus v2 baru ditambah.
-- [ ] **8.2a** Lima node baru (Patch Server, Tarpit, Jammer, Turnstile, Alarm Relay — lihat ADR 0007
+- [x] **8.2a** Lima node baru (Patch Server, Tarpit, Jammer, Turnstile, Alarm Relay — lihat ADR 0007
       §A) + urutan tick baru (Jammer sebelum sensor sweep, Patch Server paling akhir) — ≥3 test
       perilaku per node baru, hash tetap (belum dipakai skenario golden).
 - [ ] **8.2b** Perbaikan "ICE Nest": satu tembakan ICE mengenai satu virus per tick, sentry lain

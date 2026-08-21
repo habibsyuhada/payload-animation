@@ -225,9 +225,9 @@ describe("validateDefenseGraph — v2", () => {
     expect(result).toEqual({ valid: true, errors: [] });
   });
 
-  it("reports unsupported-node-type instead of throwing for a v2-only type this ruleset doesn't price yet (8.2a gives jammer a price)", () => {
+  it("reports unsupported-node-type instead of throwing for a type this ruleset has no price for (e.g. malformed JSON from localStorage/a server)", () => {
     const graph = baseGraph({
-      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      nodes: [...baseNodes(), { id: 6, type: "nonexistent-node-type" as DefenseNode["type"], tier: 1 }],
       edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
     });
     expect(() => validateDefenseGraph(graph, RULESET_V2, 1)).not.toThrow();
@@ -238,9 +238,9 @@ describe("validateDefenseGraph — v2", () => {
 
   it("still runs every other check on a graph with an unpriced node — one bad node doesn't mask the rest", () => {
     const graph = baseGraph({
-      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      nodes: [...baseNodes(), { id: 6, type: "nonexistent-node-type" as DefenseNode["type"], tier: 1 }],
       edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
-      coreHp: 999, // also wrong, independent of the jammer node
+      coreHp: 999, // also wrong, independent of the unpriced node
     });
     const result = validateDefenseGraph(graph, RULESET_V2, 1);
     expect(result.errors).toContainEqual(expect.objectContaining({ code: "unsupported-node-type", nodeId: 6 }));
@@ -248,9 +248,9 @@ describe("validateDefenseGraph — v2", () => {
   });
 
   it("excludes an unpriced node from the budget sum rather than letting it poison the total", () => {
-    // router(1) + firewall I(3) = 4pt if the jammer is excluded; well within tier-1's 20pt budget.
+    // router(1) + firewall I(3) = 4pt if the unpriced node is excluded; well within tier-1's 20pt budget.
     const graph = baseGraph({
-      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      nodes: [...baseNodes(), { id: 6, type: "nonexistent-node-type" as DefenseNode["type"], tier: 1 }],
       edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
     });
     const result = validateDefenseGraph(graph, RULESET_V2, 1);
@@ -259,7 +259,7 @@ describe("validateDefenseGraph — v2", () => {
 
   it("still rejects an unknown type under RULESET_V1 the same way (v1 was never affected by the crash)", () => {
     const graph = baseGraph({
-      nodes: [...baseNodes(), { id: 6, type: "jammer", tier: 1 }],
+      nodes: [...baseNodes(), { id: 6, type: "nonexistent-node-type" as DefenseNode["type"], tier: 1 }],
       edges: [...baseGraph().edges, { from: 3, to: 6, lengthDu: 500 }],
     });
     expect(() => validateDefenseGraph(graph, RULESET_V1, 1)).not.toThrow();

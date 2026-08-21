@@ -36,9 +36,10 @@ export interface DrawContext2D {
   rotate(angle: number): void;
 }
 
-// Placeholder colors/radii for the five v2-only node types (PLAN.md 8.2a gives them real values
-// and shapes, alongside apps/client's NodeGlyph.tsx and defenseNodeCatalog.ts); router's values
-// stand in here only so DefenseNodeType's Fase 8 widening (8.1a) keeps these Records exhaustive.
+// Colors/radii mirrored by hand in apps/client's defenseNodeCatalog.ts (same values — see that
+// file's header for why it's a duplicate, not an import: eslint boundaries forbid app -> replay
+// internals). The five v2-only types (RULESET.md §14, PLAN.md 8.2a) were seeded here as router's
+// placeholder colors in 8.1a purely to keep these Records exhaustive; these are their real values.
 const NODE_COLOR: Record<DefenseNodeType, string> = {
   entry: "#7fd8a0",
   router: "#5b6478",
@@ -48,11 +49,11 @@ const NODE_COLOR: Record<DefenseNodeType, string> = {
   scanner: "#b05ae0",
   trap: "#e05a9c",
   core: "#ffd75a",
-  "patch-server": "#5b6478",
-  tarpit: "#5b6478",
-  jammer: "#5b6478",
+  "patch-server": "#5ae08a",
+  tarpit: "#8a6a3a",
+  jammer: "#7a5ae0",
   turnstile: "#5b6478",
-  alarm: "#5b6478",
+  alarm: "#e07a2a",
 };
 
 const NODE_RADIUS: Record<DefenseNodeType, number> = {
@@ -64,11 +65,11 @@ const NODE_RADIUS: Record<DefenseNodeType, number> = {
   scanner: 10,
   trap: 10,
   core: 22,
-  "patch-server": 6,
-  tarpit: 6,
-  jammer: 6,
-  turnstile: 6,
-  alarm: 6,
+  "patch-server": 9,
+  tarpit: 9,
+  jammer: 9,
+  turnstile: 8,
+  alarm: 10,
 };
 
 /** GDD §11: "gelap (near-black biru)" — also the erase color every frame draws over (see

@@ -5,8 +5,13 @@ import { hopDistance, shortestPath } from "./graph.js";
 import {
   effectiveAccuracyPermilleV2,
   firewallMaxHpV2,
+  getAlarmConfigV2,
   getIceSentryConfigV2,
+  getJammerConfigV2,
+  getPatchServerConfigV2,
   getScannerConfigV2,
+  getTarpitConfigV2,
+  getTurnstileConfigV2,
   resolveCoreTickV2,
   resolveFirewallTickV2,
   rollIceSentryHitV2,
@@ -14,6 +19,8 @@ import {
 } from "./nodes-v2/index.js";
 import { createRng, type Rng } from "./rng.js";
 import {
+  ALARM_ICE_ACCURACY_BONUS_PERMILLE,
+  ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS,
   DEFAULT_CONDITION_TARGET_NODE_TYPES_V2,
   DEFAULT_INTEGRITY_THRESHOLD_PERMILLE_V2,
   MAX_ACTIONS_PER_TICK_V2,
@@ -30,7 +37,7 @@ import {
   getSlowCrawlConfigV2,
 } from "./ruleset-v2.js";
 import { walkSheet } from "./sheet.js";
-import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, SheetAction, SheetCondition, SheetEvent } from "./types.js";
+import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, DefenseGraph, DefenseNode, SheetAction, SheetCondition, SheetEvent } from "./types.js";
 
 /**
  * Ruleset v2 engine — the virus as a nested event sheet (docs/ADR/0006).
@@ -42,17 +49,24 @@ import type { ActionKind, BattleEvent, BattleInputV2, BattleLog, BlockTier, Defe
  *
  * ### Tick order (RULESET.md v2 §11)
  *
- * 1. **Sensor sweep** — the hazards the sheet's sensor conditions can see this tick.
+ * 1. **Sensor sweep** — the hazards the sheet's sensor conditions can see this tick. A Jammer in
+ *    range (RULESET.md §14) makes this see nothing, sheet-side, regardless of what's actually
+ *    near — checked once, ahead of the sweep, so it can't half-apply within a tick.
  * 2. **Sheet evaluation** — depth-first, top to bottom, producing a plan of intents. Never
  *    consumes RNG (ADR 0006 §2), so reading the sheet can't change the dice.
  * 3. **Statuses** — Cloak / Slow Crawl take effect *before* anything shoots, so a rule that
  *    cloaks in reaction to being scanned is protected on the same tick it fires.
  * 4. **Node effects** — the virus's Attack actions against the Breach Node it occupies, the
- *    node's counter-damage, Trap/Honeypot triggers, ICE Sentry fire, Scanner aura.
+ *    node's counter-damage (destroying a Breach Node can arm an Alarm Relay in range) → Alarm
+ *    Relay proximity trigger → ICE Sentry fire (boosted while an alert is active) → Trap/Honeypot
+ *    triggers → Scanner aura → Patch Server heal, LAST, so this tick's damage is still visible
+ *    before any of it gets healed back.
  * 5. **Utility** — Self Repair, decoy arming.
  * 6. **Movement** — the winning movement intent is consumed here, at the END of the tick, so a
  *    virus that arrives somewhere always gets one full tick of acting there before it can leave.
  *    This is the same net behaviour as v1's move-then-resolve, expressed the way the sheet reads.
+ *    Tarpit and Turnstile apply here: speed is reduced by the strongest Tarpit in range, and a
+ *    node the virus departed under a live Turnstile lockout can't be re-entered.
  * 7. **`rule-fired`** for every rule whose actions actually did something, then win/loss.
  */
 
@@ -132,6 +146,14 @@ interface BattleStateV2 {
    * applied on arrival only if the sheet writes nothing on the arrival tick itself. */
   queuedMovement: MovementActionKind | null;
   readonly triedEdgesFromNode: Map<number, Set<number>>;
+  /** Turnstile (RULESET.md §14): node id -> the tick before which re-entering it is forbidden.
+   * Keyed by node, not edge, so it blocks every movement kind equally, not just move-back. */
+  readonly turnstileLockouts: Map<number, number>;
+  /** Alarm Relay (RULESET.md §14): each relay is a one-shot trigger (like Honeypot/Trap), but the
+   * alert it raises is one shared window — a second relay firing while one is already active
+   * extends to the longer remaining duration rather than stacking a second window on top. */
+  readonly alarmTriggeredIds: Set<number>;
+  alarmActiveUntilTick: number;
 }
 
 /* --- Conditions ------------------------------------------------------------------------- */
@@ -178,7 +200,41 @@ function honeypotIsVisible(honeypotTier: BlockTier, conditionTier: BlockTier, se
   return seesDisguiseFromTier !== undefined && conditionTier >= seesDisguiseFromTier;
 }
 
+/** Jammer nodes (RULESET.md §14) currently within range of the virus — a pure function of graph
+ * position, unlike every other status here, so it needs no BattleStateV2 bookkeeping at all. */
+function activeJammerNodes(ctx: Pick<ConditionContextV2, "graph" | "location">): DefenseNode[] {
+  return ctx.graph.nodes.filter((node) => node.type === "jammer" && isVirusInRange(ctx.graph, node.id, getJammerConfigV2(requireTier(node)).radiusHops, ctx.location));
+}
+
+function isJammed(ctx: Pick<ConditionContextV2, "graph" | "location">): boolean {
+  return activeJammerNodes(ctx).length > 0;
+}
+
+/** Strongest (lowest ‰) Tarpit multiplier active at a node — a second Tarpit in range never
+ * multiplies on top of the first (RULESET.md §14: "tidak menumpuk"). 1000‰ (no effect) if none. */
+function activeTarpitMultiplierPermille(graph: DefenseGraph, nodeId: number): number {
+  let strongest = 1000;
+  for (const node of graph.nodes) {
+    if (node.type !== "tarpit") {
+      continue;
+    }
+    const config = getTarpitConfigV2(requireTier(node));
+    const distance = hopDistance(graph, node.id, nodeId);
+    if (distance !== null && distance <= config.radiusHops && config.speedMultiplierPermille < strongest) {
+      strongest = config.speedMultiplierPermille;
+    }
+  }
+  return strongest;
+}
+
 function sensedHazardNodeIds(condition: SheetCondition, ctx: Pick<ConditionContextV2, "graph" | "state" | "location">): number[] {
+  // A Jammer in range makes every sensor condition read false (ADR 0006 §8-adjacent: this is a
+  // visible, explainable blind spot, not hidden RNG — the `jammed` condition, 8.4, tells the sheet
+  // why). Gating here covers BOTH callers at once: the sensor sweep (phase 1) and
+  // evaluateConditionPositively's "honeypot-near"/"trap-near" case route through this function.
+  if (isJammed(ctx)) {
+    return [];
+  }
   const tier = condition.tier ?? 1;
   const spec = getConditionSpec(condition.kind);
   const radiusHops = getConditionRadiusHops(condition.kind, tier);
@@ -209,6 +265,11 @@ function evaluateConditionPositively(condition: SheetCondition, ctx: ConditionCo
       return here !== null && targets.includes(findNode(ctx.graph, here).type);
     }
     case "node-ahead-is": {
+      // Tier III Jammer also falsifies this one (RULESET.md §14) — seeing round a corner is
+      // exactly what Scan Ahead used to sell, and a strong-enough Jammer un-sells it.
+      if (activeJammerNodes(ctx).some((node) => getJammerConfigV2(requireTier(node)).jamsNodeAhead)) {
+        return false;
+      }
       const ahead = nodeAheadId(ctx.graph, ctx.location);
       return ahead !== null && targets.includes(findNode(ctx.graph, ahead).type);
     }
@@ -395,10 +456,15 @@ export function simulateV2(input: BattleInputV2): BattleLog {
     freshArrival: true,
     queuedMovement: null,
     triedEdgesFromNode: new Map(),
+    turnstileLockouts: new Map(),
+    alarmTriggeredIds: new Set(),
+    alarmActiveUntilTick: 0,
   };
 
   const iceSentryNodes = graph.nodes.filter((node) => node.type === "ice-sentry").sort((a, b) => a.id - b.id);
   const scannerNodes = graph.nodes.filter((node) => node.type === "scanner").sort((a, b) => a.id - b.id);
+  const patchServerNodes = graph.nodes.filter((node) => node.type === "patch-server").sort((a, b) => a.id - b.id);
+  const alarmNodes = graph.nodes.filter((node) => node.type === "alarm").sort((a, b) => a.id - b.id);
 
   /** Sensor conditions the sheet actually contains, so the hazard sweep costs nothing for a sheet that never asks. */
   const sensorConditions = walkSheet(input.virus.events)
@@ -531,6 +597,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
               state.destroyedFirewallIds.add(node.id);
               state.firewallsDestroyed += 1;
               events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id) });
+              triggerAlarmsNear(node.id);
             }
           } else if (node.type === "core" && state.coreHp > 0) {
             const newHp = Math.max(0, state.coreHp - contribution.splashDamage);
@@ -541,6 +608,33 @@ export function simulateV2(input: BattleInputV2): BattleLog {
               firedRuleIds.add(contribution.ruleId);
             }
           }
+        }
+      }
+    };
+
+    /** Alarm Relay (RULESET.md §14): one-shot per relay, arms the shared alert window, extending
+     * it to whichever is longer rather than stacking. `target: "core"` stands in for "the defense
+     * network as a whole" — there's no per-network actor in BattleEvent, and this is the closest
+     * existing convention (`status-applied`) gets. */
+    const triggerAlarm = (alarmNode: DefenseNode): void => {
+      if (state.alarmTriggeredIds.has(alarmNode.id)) {
+        return;
+      }
+      state.alarmTriggeredIds.add(alarmNode.id);
+      const config = getAlarmConfigV2(requireTier(alarmNode));
+      state.alarmActiveUntilTick = Math.max(state.alarmActiveUntilTick, tick + config.alertDurationTicks);
+      events.push({ tick, type: "status-applied", actor: String(alarmNode.id), target: "core" });
+    };
+
+    const triggerAlarmsNear = (destroyedNodeId: number): void => {
+      for (const alarmNode of alarmNodes) {
+        if (state.alarmTriggeredIds.has(alarmNode.id)) {
+          continue;
+        }
+        const config = getAlarmConfigV2(requireTier(alarmNode));
+        const distance = hopDistance(graph, destroyedNodeId, alarmNode.id);
+        if (distance !== null && distance <= config.radiusHops) {
+          triggerAlarm(alarmNode);
         }
       }
     };
@@ -564,6 +658,7 @@ export function simulateV2(input: BattleInputV2): BattleLog {
           state.firewallsDestroyed += 1;
           events.push({ tick, type: "node-destroyed", actor: "virus", target: String(node.id) });
           applyOverloadSplash(node.id);
+          triggerAlarmsNear(node.id);
         }
       } else if (node.type === "core") {
         const passive = resolveCoreTickV2(state.coreHp);
@@ -577,6 +672,21 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       }
     }
 
+    // Alarm Relay proximity trigger — a virus that comes within radius arms the relay immediately,
+    // ahead of the ICE loop below, so the alert (if this is the tick that raises it) already
+    // boosts this tick's shots. A destroy-triggered alarm (triggerAlarmsNear above) already ran
+    // earlier in this same phase, so both trigger paths take effect the tick they fire, not the next.
+    for (const alarmNode of alarmNodes) {
+      if (state.alarmTriggeredIds.has(alarmNode.id)) {
+        continue;
+      }
+      const config = getAlarmConfigV2(requireTier(alarmNode));
+      if (isVirusInRange(graph, alarmNode.id, config.radiusHops, location)) {
+        triggerAlarm(alarmNode);
+      }
+    }
+    const alarmActive = tick < state.alarmActiveUntilTick;
+
     for (const iceNode of iceSentryNodes) {
       if (cloakActive) {
         continue;
@@ -589,9 +699,11 @@ export function simulateV2(input: BattleInputV2): BattleLog {
         continue;
       }
       const scannedActive = state.scannedUntilTick !== null && tick < state.scannedUntilTick;
-      const accuracy = effectiveAccuracyPermilleV2(config.accuracyPermille, scannedActive ? state.scannedAccuracyBonusPermille : 0, slowCrawl?.iceAccuracyReductionPermille ?? 0);
+      const baseAccuracy = config.accuracyPermille + (alarmActive ? ALARM_ICE_ACCURACY_BONUS_PERMILLE : 0);
+      const accuracy = effectiveAccuracyPermilleV2(baseAccuracy, scannedActive ? state.scannedAccuracyBonusPermille : 0, slowCrawl?.iceAccuracyReductionPermille ?? 0);
       const hit = rollIceSentryHitV2(rng, accuracy);
-      state.iceNextFireTick.set(iceNode.id, tick + config.fireIntervalTicks);
+      const fireInterval = alarmActive ? Math.max(1, config.fireIntervalTicks - ALARM_ICE_FIRE_INTERVAL_REDUCTION_TICKS) : config.fireIntervalTicks;
+      state.iceNextFireTick.set(iceNode.id, tick + fireInterval);
       if (!hit) {
         continue;
       }
@@ -647,6 +759,40 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       }
     }
 
+    // Patch Server heal — runs LAST among node effects (RULESET.md §14) so this tick's damage is
+    // still visible as its own event before any of it gets healed back, rather than the two
+    // deltas silently cancelling before either is logged. Cumulative across multiple servers in
+    // range (unlike Tarpit/Alarm, nothing in the table says Patch Server doesn't stack).
+    for (const patchServerNode of patchServerNodes) {
+      const config = getPatchServerConfigV2(requireTier(patchServerNode));
+      for (const node of graph.nodes) {
+        if (node.id === patchServerNode.id) {
+          continue;
+        }
+        const distance = hopDistance(graph, patchServerNode.id, node.id);
+        if (distance === null || distance > config.radiusHops) {
+          continue;
+        }
+        if (node.type === "firewall" && !state.destroyedFirewallIds.has(node.id)) {
+          const tier = requireTier(node);
+          const maxHp = firewallMaxHpV2(tier);
+          const currentHp = state.firewallHp.get(node.id) ?? maxHp;
+          const healedHp = Math.min(maxHp, currentHp + config.healPerTick);
+          if (healedHp > currentHp) {
+            state.firewallHp.set(node.id, healedHp);
+            events.push({ tick, type: "node-repaired", actor: String(patchServerNode.id), target: String(node.id), delta: healedHp - currentHp });
+          }
+        } else if (node.type === "core" && state.coreHp > 0) {
+          const healedHp = Math.min(graph.coreHp, state.coreHp + config.healPerTick);
+          if (healedHp > state.coreHp) {
+            const delta = healedHp - state.coreHp;
+            state.coreHp = healedHp;
+            events.push({ tick, type: "node-repaired", actor: String(patchServerNode.id), target: String(node.id), delta });
+          }
+        }
+      }
+    }
+
     // --- 5. Utility ---
     const healAmount = plan.selfRepair.reduce((sum, contribution) => sum + contribution.amount, 0);
     if (healAmount > 0 && !state.died) {
@@ -691,15 +837,27 @@ export function simulateV2(input: BattleInputV2): BattleLog {
       const intentKind = plan.movement?.value ?? state.queuedMovement;
       state.queuedMovement = null;
       if (intentKind !== null && intentKind !== undefined && !isBlockingNodeV2(fromNodeId, graph, state)) {
-        const target = resolveMovementTarget(intentKind, fromNodeId, graph, state, rng, knownHazardNodeIds);
+        const rawTarget = resolveMovementTarget(intentKind, fromNodeId, graph, state, rng, knownHazardNodeIds);
+        // Turnstile (RULESET.md §14): a node the virus departed recently forbids re-entry — this
+        // is a post-filter rather than an `avoid` set threaded into every movement kind, so it
+        // blocks move-back/move-random/pathfinding equally instead of only the one action that
+        // names it. A blocked target means the virus simply doesn't move this tick.
+        const target = rawTarget !== null && (state.turnstileLockouts.get(rawTarget) ?? 0) > tick ? null : rawTarget;
         if (plan.movement) {
           // Holding position is a decision the rule made, so the rule fired even when nothing moved.
           firedRuleIds.add(plan.movement.ruleId);
         }
         if (target !== null) {
           const baseSpeed = getActionSpec(intentKind).speedDuPerTick ?? 50;
-          const speed = slowCrawl ? Math.max(1, applyPermille(baseSpeed, slowCrawl.speedMultiplierPermille)) : baseSpeed;
+          const tarpitMultiplier = activeTarpitMultiplierPermille(graph, fromNodeId);
+          let speed = tarpitMultiplier < 1000 ? Math.max(1, applyPermille(baseSpeed, tarpitMultiplier)) : baseSpeed;
+          if (slowCrawl) {
+            speed = Math.max(1, applyPermille(speed, slowCrawl.speedMultiplierPermille));
+          }
           events.push({ tick, type: "virus-departed-node", actor: "virus", target: String(fromNodeId) });
+          if (findNode(graph, fromNodeId).type === "turnstile") {
+            state.turnstileLockouts.set(fromNodeId, tick + getTurnstileConfigV2(requireTier(findNode(graph, fromNodeId))).lockoutTicks);
+          }
           state.previousNodeId = fromNodeId;
           location = { kind: "edge", from: fromNodeId, to: target, remainingTicks: ticksToCrossEdge(findEdgeLength(graph, fromNodeId, target), speed) };
         }

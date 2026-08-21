@@ -17,8 +17,10 @@ import type { BlockTier, DefenseNodeType } from "@payload/sim";
  */
 
 /** A silhouette a node type renders as on the grid — distinct per type so nodes read apart by
- * shape alone, not just fill color (color still carries category/faction meaning on top). */
-export type NodeShape = "circle" | "diamond" | "triangle" | "triangle-down" | "square" | "hexagon" | "octagon" | "star";
+ * shape alone, not just fill color (color still carries category/faction meaning on top). The
+ * last five (added in Fase 8 for the v2-only node types) are chosen to read as their own thing at
+ * a glance: a heal cross, a slow-down pentagon, a jamming burst, a gate bar, an alert ring. */
+export type NodeShape = "circle" | "diamond" | "triangle" | "triangle-down" | "square" | "hexagon" | "octagon" | "star" | "plus" | "pentagon" | "burst" | "bar" | "ring";
 
 export interface DefenseNodeTierEntry {
   readonly tier: BlockTier;
@@ -103,6 +105,69 @@ export const PLACEABLE_NODE_CATALOG: readonly DefenseNodeCatalogEntry[] = [
       { tier: 1, description: "Meledak sekali saat node pertama dimasuki: damage 180, lalu jadi Router kosong." },
       { tier: 2, description: "Meledak sekali saat pertama dimasuki: damage 260, lalu jadi Router kosong." },
       { tier: 3, description: "Meledak sekali saat pertama dimasuki: damage 350 + splash 100 ke node tetangga, lalu jadi Router kosong." },
+    ],
+  },
+  // Five v2-only node types (RULESET.md §14, PLAN.md 8.2a). Defend.tsx's battle test already runs
+  // ruleset v2 (logic/defenseTest.ts), so these become placeable there automatically — no separate
+  // v1/v2 palette split needed.
+  {
+    type: "patch-server",
+    label: "Patch Server",
+    tiered: true,
+    color: "#5ae08a",
+    shape: "plus",
+    tiers: [
+      { tier: 1, description: "Aura support radius 1 hop: menyembuhkan Breach Node hidup di sekitarnya +8 HP/tick." },
+      { tier: 2, description: "Radius 1 hop, +12 HP/tick." },
+      { tier: 3, description: "Radius 2 hop, +18 HP/tick." },
+    ],
+  },
+  {
+    type: "tarpit",
+    label: "Tarpit",
+    tiered: true,
+    color: "#8a6a3a",
+    shape: "pentagon",
+    tiers: [
+      { tier: 1, description: "Aura radius 1 hop: virus di dalamnya melambat jadi 60% speed. Tidak menumpuk dengan Tarpit lain." },
+      { tier: 2, description: "Radius 1 hop, speed 50%." },
+      { tier: 3, description: "Radius 2 hop, speed 40%." },
+    ],
+  },
+  {
+    type: "jammer",
+    label: "Jammer",
+    tiered: true,
+    color: "#7a5ae0",
+    shape: "burst",
+    tiers: [
+      { tier: 1, description: "Aura radius 1 hop: semua kondisi sensor virus di dalamnya bernilai salah." },
+      { tier: 2, description: "Radius 2 hop." },
+      { tier: 3, description: "Radius 2 hop, juga memalsukan \"node di depan\"." },
+    ],
+  },
+  {
+    type: "turnstile",
+    label: "Turnstile",
+    tiered: true,
+    color: "#5b6478",
+    shape: "bar",
+    tiers: [
+      { tier: 1, description: "Struktural, tak bisa dihancurkan. Virus yang meninggalkan node ini tak bisa kembali selama 40 tick." },
+      { tier: 2, description: "Lockout 70 tick." },
+      { tier: 3, description: "Lockout 110 tick." },
+    ],
+  },
+  {
+    type: "alarm",
+    label: "Alarm Relay",
+    tiered: true,
+    color: "#e07a2a",
+    shape: "ring",
+    tiers: [
+      { tier: 1, description: "Sekali per battle: virus masuk radius 1 hop atau Breach Node di sekitar hancur → semua ICE Sentry siaga 120 tick (interval −1, akurasi +10%)." },
+      { tier: 2, description: "Radius 2 hop, siaga 180 tick." },
+      { tier: 3, description: "Radius 2 hop, siaga 240 tick." },
     ],
   },
 ];

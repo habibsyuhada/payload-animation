@@ -202,6 +202,9 @@ export type BattleEventType =
   | "virus-died"
   | "node-damaged"
   | "node-destroyed"
+  /** v2 only (RULESET.md §14, ADR 0007 §A): Patch Server healing a Breach Node — deliberately its
+   * own type rather than a positive-delta "node-damaged", which would read as a contradiction. */
+  | "node-repaired"
   | "status-applied"
   | "status-expired"
   | "decoy-absorbed"
