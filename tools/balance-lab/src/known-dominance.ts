@@ -19,13 +19,16 @@ export interface KnownDominance {
   readonly defenses: readonly KnownDominanceEntry[];
 }
 
+/**
+ * Empty as of PLAN.md 8.8 — "ICE Nest" (2x ICE Sentry II covering one choke point, RULESET.md §9)
+ * is no longer dominant. Two things changed since it was last recorded here: 8.2b's "one virus, one
+ * hit per tick" cap, and — the part that actually closed it — 8.4's `target-strike` giving a sheet
+ * a way to kill the sentries outright instead of only tanking or evading their fire, plus 8.8's
+ * sheet-generator.ts finally exercising it (its params weren't in the random generator's coverage
+ * until this phase). Re-measured directly: the banded dominance search (`searchDominanceByBand`)
+ * comes back clean on ICE Nest in every band 1-4 with the current population.
+ */
 export const KNOWN_DOMINANCE: KnownDominance = {
   viruses: [],
-  defenses: [
-    {
-      name: "ICE Nest",
-      reason:
-        "Two overlapping ICE Sentry II covering one choke point beat everything in v1 too (RULESET.md §9, recorded there as the top v2 priority and explicitly left undecided: cap ICE radius overlap? lower tier II accuracy?). v2's tick-based Cloak was one of the candidate fixes and is not enough on its own — the search now measures that instead of assuming it. PLAN.md 8.2b implemented the third candidate ('satu virus, satu tembakan per tick') — measured, and also not enough alone: it caps simultaneous same-tick double-hits, but two sentries with staggered (not synchronized) cooldowns still deliver a much higher SUSTAINED fire rate than one sentry ever could, and that staggered-coverage effect is what the archetype's ≤7.5% ceiling actually comes from, not simultaneity. Still open — PLAN.md 8.8 is where this gets resolved (candidates now narrowed to: shared cooldown pool across sentries covering the same node, or a hard cap on overlapping defense-node radii at save/validate time) or the archetype composition itself gets revised.",
-    },
-  ],
+  defenses: [],
 };
