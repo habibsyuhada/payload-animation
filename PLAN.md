@@ -244,10 +244,11 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       bergerak: `SCENARIO_SHEET_V2` yang dibekukan di `determinism.test.ts` tidak memakai satu pun
       kondisi/aksi baru, jadi tidak ada byte yang berubah untuknya — berbeda dari 8.2b yang memang
       mengubah perilaku node yang SUDAH dipakai skenario itu.
-- [ ] **8.5** `docs/RULESET.md` diperluas di tempat (§5/§10-13 + §11a + §14 baru) dan koreksi §0
-      (tandai eksplisit "v1"); `docs/ADR/0008` (multi-entitas & checkpoint), `docs/ADR/0009` (riset
-      & ekonomi lokal, termasuk pelonggaran boundaries `shared → sim`); `docs/HANDOFF.md` ditulis
-      ulang, jebakan baru dicatat di §5.
+- [x] **8.5** `docs/RULESET.md` diperluas di tempat (§8/§10-13 diperluas, §11a + §12a + §14/§14.1
+      baru) dan koreksi §0 (tandai eksplisit "v1", arahkan ke §11a); `docs/ADR/0008` (multi-entitas
+      & checkpoint, accepted) dan `docs/ADR/0009` (riset & ekonomi lokal, proposed — termasuk
+      pelonggaran boundaries `shared → sim`) ditulis; `docs/HANDOFF.md` ditulis ulang untuk posisi
+      Fase 8, jebakan baru (#19-22) dicatat di §5.
 - [ ] **8.6** Pohon riset data: `packages/shared/src/research.ts` + `research-tree.ts` (±70 simpul,
       5 cabang) + `unlocks.ts`, `eslint.config.js` `{ from: "shared", allow: ["sim"] }` — test
       kelengkapan (tiap kind & pasangan node×tier tepat sekali di pohon), test tanpa siklus, test
