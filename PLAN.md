@@ -269,9 +269,26 @@ packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase
       item terkunci navigasi ke Riset alih-alih ditambahkan), `Research.test.tsx` (tab, riset,
       unlock anak, link prasyarat, deep-link), `researchStore.test.ts` (spend/refuse, `claimOnce`
       sekali-per-source, reload mempertahankan progres, migrasi membuat sheet lama tetap legal).
-- [ ] **8.8** `tools/balance-lab`: dukungan parameter baru di generator, arketipe node/virus baru,
-      dimensi pita kedalaman riset di `dominance.ts`/`report.ts` — `known-dominance.ts` **kosong**,
-      job CI `balance-dominance` hijau, `REPORT.md` ter-regenerasi per pita.
+- [x] **8.8** `tools/balance-lab`: `sheet-generator.ts` sekarang mengisi setiap parameter 8.4
+      (`hops`/`thresholdPermille`/`ticks`/`flagIndex`/`count`/`targetNodeTypes`) dan kelima tipe
+      node v2 baru, bukan cuma katalog pra-8.4. 3 arketipe virus baru (Swarm Bomber, Ghost Memory,
+      Support Hunter) + 5 arketipe pertahanan baru (Patch Wall, Tarpit Maze, Jam Corridor, Turnstile
+      Spiral, Alarm Nest) — satu per node 8.2a. `depth-band.ts` menurunkan pita kedalaman riset
+      (0–4) sebuah sheet/graf langsung dari `RESEARCH_TREE` (`packages/shared`, sumber yang sama
+      dipakai klien), dan `searchDominanceByBand` menjalankan pencarian dominasi per pita, bukan
+      satu populasi datar. Pencarian per-pita membongkar dua temuan dominasi nyata yang sebelumnya
+      tidak terukur sama sekali: "Firewall Wall" lawas membiarkan satu tubuh hanya pernah menghadapi
+      SATU dari dua Firewall-nya (jalur paralel) — dirombak jadi satu jalur gabungan (Trap I →
+      Firewall I → ICE I yang menjangkau firewall SEKALIGUS Core) sampai winrate-nya jatuh di
+      dalam pita [25%, 75%]; dan "Support Hunter" (memakai `target-strike`) menyapu semua
+      pertahanan asli sampai "Turnstile Spiral" dirombak memakai Honeypot sungguhan di satu-satunya
+      jalur (bukan umpan buntu) — v2 Honeypot mematikan begitu masuk terlepas dari deteksi.
+      `known-dominance.ts` **kosong**: entri "ICE Nest" dihapus setelah pencarian yang sudah
+      dibongkar-per-pita membuktikan ia tidak lagi dominan (8.2b + `target-strike` 8.4 bersama-sama
+      menutupnya, dan generator baru 8.8 ini adalah kali pertama parameter `target-strike` masuk
+      cakupan acak untuk membuktikannya). `pnpm --filter @payload/balance-lab dominance` (job CI
+      `balance-dominance`) hijau bersih di keempat pita; `REPORT.md` ter-regenerasi dengan bagian
+      dominasi per pita.
 
 ---
 
