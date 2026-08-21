@@ -36,6 +36,9 @@ export interface DrawContext2D {
   rotate(angle: number): void;
 }
 
+// Placeholder colors/radii for the five v2-only node types (PLAN.md 8.2a gives them real values
+// and shapes, alongside apps/client's NodeGlyph.tsx and defenseNodeCatalog.ts); router's values
+// stand in here only so DefenseNodeType's Fase 8 widening (8.1a) keeps these Records exhaustive.
 const NODE_COLOR: Record<DefenseNodeType, string> = {
   entry: "#7fd8a0",
   router: "#5b6478",
@@ -45,6 +48,11 @@ const NODE_COLOR: Record<DefenseNodeType, string> = {
   scanner: "#b05ae0",
   trap: "#e05a9c",
   core: "#ffd75a",
+  "patch-server": "#5b6478",
+  tarpit: "#5b6478",
+  jammer: "#5b6478",
+  turnstile: "#5b6478",
+  alarm: "#5b6478",
 };
 
 const NODE_RADIUS: Record<DefenseNodeType, number> = {
@@ -56,6 +64,11 @@ const NODE_RADIUS: Record<DefenseNodeType, number> = {
   scanner: 10,
   trap: 10,
   core: 22,
+  "patch-server": 6,
+  tarpit: 6,
+  jammer: 6,
+  turnstile: 6,
+  alarm: 6,
 };
 
 /** GDD §11: "gelap (near-black biru)" — also the erase color every frame draws over (see

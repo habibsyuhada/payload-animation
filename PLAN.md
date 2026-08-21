@@ -199,7 +199,7 @@ snapshot v1 di `test/__snapshots__/engine.test.ts.snap` **tidak boleh bergerak**
 8.4 (yang memang mengubah angka) dan wajib disebut di commit message. `git diff --stat
 packages/sim/src/ruleset.ts packages/sim/src/nodes/` wajib kosong sepanjang fase.
 
-- [ ] **8.1a** `packages/sim/src/types.ts`: `DefenseNodeType` jadi superset,
+- [x] **8.1a** `packages/sim/src/types.ts`: `DefenseNodeType` jadi superset,
       `DEFENSE_NODE_TYPES_V1`/`V2` sebagai konstanta runtime, `DefenseNodeTypeV1` sebagai subtype —
       no-op murni, tidak ada file lain disentuh. `pnpm typecheck test` hijau, hash tidak bergerak.
 - [ ] **8.1b** Tabel & modul node v2: perluas `ruleset-v2.ts` (getter bersufiks `V2`), buat

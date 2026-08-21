@@ -134,15 +134,23 @@ export interface VirusProgram {
   readonly events: readonly SheetEvent[];
 }
 
-export type DefenseNodeType =
-  | "router"
-  | "firewall"
-  | "ice-sentry"
-  | "honeypot"
-  | "scanner"
-  | "trap"
-  | "core"
-  | "entry";
+/**
+ * v1's node types, as a runtime array (not just a type) — `validateDefenseGraph` needs a `Set` it
+ * can check an untyped `DefenseGraph` (from `localStorage`, or a future server) against, not just
+ * a compile-time guarantee. (ADR 0007 §"Memisah tabel node v2 dari v1 yang beku".)
+ */
+export const DEFENSE_NODE_TYPES_V1 = ["router", "firewall", "ice-sentry", "honeypot", "scanner", "trap", "core", "entry"] as const;
+export type DefenseNodeTypeV1 = (typeof DEFENSE_NODE_TYPES_V1)[number];
+
+/**
+ * v2 adds five node types (RULESET.md §14, ADR 0007 §A) on top of everything v1 has. `DefenseGraph`
+ * is shared by `BattleInputV1` and `BattleInputV2`, so the type is one superset rather than two
+ * unrelated unions — splitting it would cascade into `battle-common.ts`, `graph.ts`, `score.ts`,
+ * and both engines for no benefit, since a v1 graph containing a v2-only node type is a *runtime*
+ * validation failure (`unsupported-node-type`, `graph.ts`), not a type error.
+ */
+export const DEFENSE_NODE_TYPES_V2 = [...DEFENSE_NODE_TYPES_V1, "patch-server", "tarpit", "jammer", "turnstile", "alarm"] as const;
+export type DefenseNodeType = (typeof DEFENSE_NODE_TYPES_V2)[number];
 
 /** Router/Entry/Core are untiered (RULESET.md §5.1); firewall/ice-sentry/honeypot/scanner/trap carry a tier. */
 export interface DefenseNode {
