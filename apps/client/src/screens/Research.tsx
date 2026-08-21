@@ -9,13 +9,15 @@ import { theme } from "../theme.js";
 import { Screen } from "./Screen.js";
 
 /**
- * Research — PLAN.md 8.7: replaces the placeholder. Tap-driven, no drag, phone-first (390px) — the
- * same convention V7.3's Virus Lab and the Defend picker already settled on (HANDOFF §5 no.14).
+ * Research — PLAN.md 8.7: replaces the placeholder. Renders as a skill-tree map: small round nodes
+ * connected by SVG bezier lines (one horizontally-scrollable column per depth), tap-driven, no
+ * drag/pan — same phone-first (390px) convention V7.3's Virus Lab and the Defend picker settled on
+ * (HANDOFF §5 no.14). Tapping a node opens a detail modal (name, cost, unlocks, locked-reason);
+ * from there you either close back to the map or Riset (buy) it, which closes the modal too.
  *
- * Renders as an actual tree diagram: one horizontally-scrollable column per depth, SVG bezier
- * lines drawn from each node's same-branch prerequisites to itself. Cross-branch requires (only
- * the depth-4 capstones have those, per research-tree.ts's doc comment) have nothing to connect to
- * within the active branch, so they fall back to the existing "Terkunci: butuh <link>" text.
+ * Cross-branch requires (only the depth-4 capstones have those, per research-tree.ts's doc
+ * comment) have no same-branch node to connect a line to, so they fall back to the detail modal's
+ * "Terkunci: butuh <link>" text, same as before.
  */
 
 const BRANCH_LABEL: Record<ResearchBranch, string> = {
@@ -64,6 +66,7 @@ function statusOf(node: ResearchNode, completed: readonly string[], data: number
 }
 
 const STATUS_LABEL: Record<NodeStatus, string> = { selesai: "Selesai", bisa: "Bisa diriset", terkunci: "Terkunci" };
+const STATUS_GLYPH: Record<NodeStatus, string> = { selesai: "✓", bisa: "", terkunci: "🔒" };
 
 /** One bezier line from a same-branch prerequisite's right edge to a node's left edge, in
  * coordinates relative to the tree container — see the connector-measuring effect below. */
@@ -81,46 +84,28 @@ function connectorPath(x1: number, y1: number, x2: number, y2: number): string {
   return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
 }
 
-function ResearchNodeCard({ node, status, missingRequires, onFocusRequire, cardRef }: { node: ResearchNode; status: NodeStatus; missingRequires: readonly ResearchNode[]; onFocusRequire: (id: string) => void; cardRef: (el: HTMLLIElement | null) => void }): JSX.Element {
-  const research = useResearchStore((state) => state.research);
-  const data = useResearchStore((state) => state.data);
-  const canAfford = data >= node.costData;
-
+/** A single skill-tree node: a round tappable glyph plus its name underneath. All the detail
+ * (summary, unlocks, cost, buy button) lives in the detail modal, opened via `onOpen`. */
+function ResearchNodeGlyph({ node, status, isOpen, onOpen, glyphRef }: { node: ResearchNode; status: NodeStatus; isOpen: boolean; onOpen: (id: string) => void; glyphRef: (el: HTMLButtonElement | null) => void }): JSX.Element {
   return (
-    <li ref={cardRef} className="payload-research-node" data-testid="research-node" data-node-id={node.id} data-status={status} style={{ borderColor: status === "selesai" ? BRANCH_COLOR[node.branch] : theme.border }}>
-      <div className="payload-research-node-main">
-        <span className="payload-research-node-name">{node.name}</span>
-        <span className="payload-research-node-cost">{node.costData === 0 ? "gratis" : `${node.costData} Data`}</span>
-      </div>
-      <p className="payload-card-note">{node.summary}</p>
-      <ul className="payload-research-unlocks">
-        {node.unlocks.map((unlock, index) => (
-          <li key={index}>{describeUnlock(unlock)}</li>
-        ))}
-      </ul>
-      {status === "terkunci" && missingRequires.length > 0 && (
-        <p className="payload-card-note" data-testid="research-node-locked-reason">
-          Terkunci: butuh{" "}
-          {missingRequires.map((required, index) => (
-            <span key={required.id}>
-              {index > 0 ? ", " : ""}
-              <button type="button" className="payload-link-button" onClick={() => onFocusRequire(required.id)}>
-                {required.name}
-              </button>
-            </span>
-          ))}
-        </p>
-      )}
-      <div className="payload-research-node-footer">
-        <span className="payload-research-node-status" data-testid="research-node-status">
-          {STATUS_LABEL[status]}
-        </span>
-        {status === "bisa" && (
-          <button type="button" className="payload-btn-primary" data-testid="research-node-button" disabled={!canAfford} onClick={() => research(node.id)}>
-            Riset
-          </button>
-        )}
-      </div>
+    <li className="payload-research-node" data-testid="research-node" data-node-id={node.id} data-status={status}>
+      <button
+        ref={glyphRef}
+        type="button"
+        className="payload-research-node-button"
+        data-testid="research-node-open"
+        data-open={isOpen}
+        aria-label={`${node.name} — ${STATUS_LABEL[status]}`}
+        style={{
+          borderColor: status === "terkunci" ? theme.border : BRANCH_COLOR[node.branch],
+          background: status === "selesai" ? BRANCH_COLOR[node.branch] : theme.backgroundPanel,
+          color: status === "selesai" ? theme.background : status === "terkunci" ? theme.textMuted : BRANCH_COLOR[node.branch],
+        }}
+        onClick={() => onOpen(node.id)}
+      >
+        {STATUS_GLYPH[status]}
+      </button>
+      <span className="payload-research-node-label">{node.name}</span>
     </li>
   );
 }
@@ -129,12 +114,14 @@ export function Research(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const data = useResearchStore((state) => state.data);
   const completed = useResearchStore((state) => state.completed);
+  const research = useResearchStore((state) => state.research);
   const focusId = searchParams.get("focus");
   const focusedNode = focusId ? researchNodeFor(RESEARCH_TREE, focusId) : undefined;
   const [activeBranch, setActiveBranch] = useState<ResearchBranch>(focusedNode?.branch ?? "inti");
+  const [openNodeId, setOpenNodeId] = useState<string | undefined>(focusedNode?.id);
 
   const treeRef = useRef<HTMLDivElement | null>(null);
-  const nodeRefs = useRef<Map<string, HTMLLIElement>>(new Map());
+  const nodeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [lines, setLines] = useState<readonly TreeLine[]>([]);
 
   const completedCount = completed.length;
@@ -207,13 +194,25 @@ export function Research(): JSX.Element {
     };
   }, [branchNodes, completed, data]);
 
+  /** Switches to a node's branch, opens its detail modal, and syncs `?focus=` so the jump is
+   * shareable/deep-linkable — used both for tapping a map node and for a locked-reason link. */
   function focusOn(nodeId: string): void {
     const node = researchNodeFor(RESEARCH_TREE, nodeId);
     if (node) {
       setActiveBranch(node.branch);
       setSearchParams({ focus: nodeId });
+      setOpenNodeId(nodeId);
     }
   }
+
+  function closeDetail(): void {
+    setOpenNodeId(undefined);
+  }
+
+  const openNode = openNodeId ? researchNodeFor(RESEARCH_TREE, openNodeId) : undefined;
+  const openStatus = openNode ? statusOf(openNode, completed, data) : undefined;
+  const openMissingRequires = openNode ? openNode.requires.map((id) => researchNodeFor(RESEARCH_TREE, id)!).filter((required) => !completed.includes(required.id)) : [];
+  const canAffordOpen = openNode ? data >= openNode.costData : false;
 
   return (
     <Screen title="Research">
@@ -237,7 +236,10 @@ export function Research(): JSX.Element {
             data-branch={branch}
             className="payload-research-tab"
             style={{ borderColor: BRANCH_COLOR[branch], background: activeBranch === branch ? BRANCH_COLOR[branch] : "transparent", color: activeBranch === branch ? theme.background : BRANCH_COLOR[branch] }}
-            onClick={() => setActiveBranch(branch)}
+            onClick={() => {
+              setActiveBranch(branch);
+              closeDetail();
+            }}
           >
             {BRANCH_LABEL[branch]}
           </button>
@@ -256,32 +258,84 @@ export function Research(): JSX.Element {
               <div key={depth} className="payload-research-tree-column">
                 <span className="payload-research-tree-column-label">{DEPTH_LABEL[depth] ?? `Tahap ${depth}`}</span>
                 <ul className="payload-research-list">
-                  {nodes.map((node) => {
-                    const status = statusOf(node, completed, data);
-                    const missingRequires = node.requires.map((id) => researchNodeFor(RESEARCH_TREE, id)!).filter((required) => !completed.includes(required.id));
-                    return (
-                      <ResearchNodeCard
-                        key={node.id}
-                        node={node}
-                        status={status}
-                        missingRequires={missingRequires}
-                        onFocusRequire={focusOn}
-                        cardRef={(el) => {
-                          if (el) {
-                            nodeRefs.current.set(node.id, el);
-                          } else {
-                            nodeRefs.current.delete(node.id);
-                          }
-                        }}
-                      />
-                    );
-                  })}
+                  {nodes.map((node) => (
+                    <ResearchNodeGlyph
+                      key={node.id}
+                      node={node}
+                      status={statusOf(node, completed, data)}
+                      isOpen={node.id === openNodeId}
+                      onOpen={focusOn}
+                      glyphRef={(el) => {
+                        if (el) {
+                          nodeRefs.current.set(node.id, el);
+                        } else {
+                          nodeRefs.current.delete(node.id);
+                        }
+                      }}
+                    />
+                  ))}
                 </ul>
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      {openNode && openStatus && (
+        <div className="payload-modal-backdrop" data-testid="research-detail-backdrop" onClick={closeDetail}>
+          <div className="payload-modal" role="dialog" aria-label={`Detail ${openNode.name}`} data-testid="research-detail" data-node-id={openNode.id} onClick={(event) => event.stopPropagation()}>
+            <h2>{openNode.name}</h2>
+            <p className="payload-defend-detail-body">{openNode.summary}</p>
+            <dl className="payload-defend-detail-stats">
+              <div>
+                <dt>Biaya</dt>
+                <dd data-testid="research-detail-cost">{openNode.costData === 0 ? "Gratis" : `${openNode.costData} Data`}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd data-testid="research-node-status">{STATUS_LABEL[openStatus]}</dd>
+              </div>
+            </dl>
+            <ul className="payload-research-unlocks">
+              {openNode.unlocks.map((unlock, index) => (
+                <li key={index}>{describeUnlock(unlock)}</li>
+              ))}
+            </ul>
+            {openStatus === "terkunci" && openMissingRequires.length > 0 && (
+              <p className="payload-card-note" data-testid="research-node-locked-reason">
+                Terkunci: butuh{" "}
+                {openMissingRequires.map((required, index) => (
+                  <span key={required.id}>
+                    {index > 0 ? ", " : ""}
+                    <button type="button" className="payload-link-button" onClick={() => focusOn(required.id)}>
+                      {required.name}
+                    </button>
+                  </span>
+                ))}
+              </p>
+            )}
+            <div className="payload-research-detail-actions">
+              <button type="button" data-testid="research-detail-close" onClick={closeDetail}>
+                Tutup
+              </button>
+              {openStatus === "bisa" && (
+                <button
+                  type="button"
+                  className="payload-btn-primary"
+                  data-testid="research-node-button"
+                  disabled={!canAffordOpen}
+                  onClick={() => {
+                    research(openNode.id);
+                    closeDetail();
+                  }}
+                >
+                  Riset
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Screen>
   );
 }
