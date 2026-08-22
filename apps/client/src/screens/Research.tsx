@@ -84,6 +84,58 @@ function connectorPath(x1: number, y1: number, x2: number, y2: number): string {
   return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
 }
 
+/**
+ * Orders every node in a branch so that, within each depth column, a subtree's children stay
+ * grouped near their parent — a plain sort by id (the old behaviour) scatters siblings across the
+ * column at random and the connector lines cross constantly ("benang kusut"). This is a depth-first
+ * pre-order walk from the branch's roots (nodes with no same-branch prerequisite): each root's
+ * whole subtree is numbered before moving to the next root, so two nodes sharing a parent always
+ * land close together in the next column. The one node in the whole tree with two same-branch
+ * parents (replikasi.worm-split.1, research-tree.ts's own doc comment) is simply claimed by
+ * whichever parent's walk reaches it first; a handful of nodes have no same-branch prerequisite at
+ * all past depth 1 (e.g. pengintaian's flag-reader nodes) — those become extra roots of their own
+ * and sort after the connected part of the tree instead of interleaving with it.
+ */
+function computeTreeOrder(branchNodes: readonly ResearchNode[]): Map<string, number> {
+  const idsInBranch = new Set(branchNodes.map((node) => node.id));
+  const childrenOf = new Map<string, string[]>();
+  const hasSameBranchParent = new Set<string>();
+  for (const node of branchNodes) {
+    for (const requireId of node.requires) {
+      if (!idsInBranch.has(requireId)) {
+        continue;
+      }
+      hasSameBranchParent.add(node.id);
+      const siblings = childrenOf.get(requireId);
+      if (siblings) {
+        siblings.push(node.id);
+      } else {
+        childrenOf.set(requireId, [node.id]);
+      }
+    }
+  }
+  const roots = branchNodes
+    .filter((node) => !hasSameBranchParent.has(node.id))
+    .slice()
+    .sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id));
+
+  const order = new Map<string, number>();
+  let counter = 0;
+  function visit(nodeId: string): void {
+    if (order.has(nodeId)) {
+      return;
+    }
+    order.set(nodeId, counter++);
+    for (const childId of (childrenOf.get(nodeId) ?? []).slice().sort((a, b) => a.localeCompare(b))) {
+      visit(childId);
+    }
+  }
+  for (const root of roots) {
+    visit(root.id);
+  }
+  return order;
+}
+
 /** A single skill-tree node: a round tappable glyph plus its name underneath. All the detail
  * (summary, unlocks, cost, buy button) lives in the detail modal, opened via `onOpen`. */
 function ResearchNodeGlyph({ node, status, isOpen, onOpen, glyphRef }: { node: ResearchNode; status: NodeStatus; isOpen: boolean; onOpen: (id: string) => void; glyphRef: (el: HTMLButtonElement | null) => void }): JSX.Element {
@@ -137,6 +189,7 @@ export function Research(): JSX.Element {
   );
 
   const columns = useMemo(() => {
+    const order = computeTreeOrder(branchNodes);
     const byDepth = new Map<number, ResearchNode[]>();
     for (const node of branchNodes) {
       const existing = byDepth.get(node.depth);
@@ -145,6 +198,9 @@ export function Research(): JSX.Element {
       } else {
         byDepth.set(node.depth, [node]);
       }
+    }
+    for (const nodes of byDepth.values()) {
+      nodes.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
     }
     return [...byDepth.entries()].sort(([a], [b]) => a - b);
   }, [branchNodes]);
