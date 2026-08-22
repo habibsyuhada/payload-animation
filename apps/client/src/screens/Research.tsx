@@ -1,6 +1,6 @@
 import { RESEARCH_TREE, canResearch, researchNodeFor, type ResearchBranch, type ResearchNode, type Unlock } from "@payload/shared";
 import type { BlockTier } from "@payload/sim";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { findActionEntry, findConditionEntry } from "../data/sheetCatalog.js";
 import { findPlaceableEntry } from "../data/defenseNodeCatalog.js";
@@ -9,8 +9,15 @@ import { theme } from "../theme.js";
 import { Screen } from "./Screen.js";
 
 /**
- * Research — PLAN.md 8.7: replaces the placeholder. Tap-driven, no drag, phone-first (390px) — the
- * same convention V7.3's Virus Lab and the Defend picker already settled on (HANDOFF §5 no.14).
+ * Research — PLAN.md 8.7: replaces the placeholder. Renders as a skill-tree map: small round nodes
+ * connected by SVG bezier lines (one horizontally-scrollable column per depth), tap-driven, no
+ * drag/pan — same phone-first (390px) convention V7.3's Virus Lab and the Defend picker settled on
+ * (HANDOFF §5 no.14). Tapping a node opens a detail modal (name, cost, unlocks, locked-reason);
+ * from there you either close back to the map or Riset (buy) it, which closes the modal too.
+ *
+ * Cross-branch requires (only the depth-4 capstones have those, per research-tree.ts's doc
+ * comment) have no same-branch node to connect a line to, so they fall back to the detail modal's
+ * "Terkunci: butuh <link>" text, same as before.
  */
 
 const BRANCH_LABEL: Record<ResearchBranch, string> = {
@@ -33,6 +40,7 @@ const BRANCH_COLOR: Record<ResearchBranch, string> = {
 
 const BRANCH_ORDER: readonly ResearchBranch[] = ["inti", "serbuan", "bayangan", "pengintaian", "replikasi"];
 const ROMAN_TIER: Record<BlockTier, string> = { 1: "I", 2: "II", 3: "III" };
+const DEPTH_LABEL = ["Dasar", "Tahap I", "Tahap II", "Tahap III", "Tahap IV"];
 
 function describeUnlock(unlock: Unlock): string {
   if (unlock.kind === "condition") {
@@ -58,53 +66,98 @@ function statusOf(node: ResearchNode, completed: readonly string[], data: number
 }
 
 const STATUS_LABEL: Record<NodeStatus, string> = { selesai: "Selesai", bisa: "Bisa diriset", terkunci: "Terkunci" };
+const STATUS_GLYPH: Record<NodeStatus, string> = { selesai: "✓", bisa: "", terkunci: "🔒" };
 
-function ResearchNodeRow({ node, status, missingRequires, onFocusRequire }: { node: ResearchNode; status: NodeStatus; missingRequires: readonly ResearchNode[]; onFocusRequire: (id: string) => void }): JSX.Element {
-  const research = useResearchStore((state) => state.research);
-  const data = useResearchStore((state) => state.data);
-  const canAfford = data >= node.costData;
+/** One bezier line from a same-branch prerequisite's right edge to a node's left edge, in
+ * coordinates relative to the tree container — see the connector-measuring effect below. */
+interface TreeLine {
+  readonly id: string;
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly done: boolean;
+}
 
+function connectorPath(x1: number, y1: number, x2: number, y2: number): string {
+  const midX = (x1 + x2) / 2;
+  return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
+}
+
+/**
+ * Orders every node in a branch so that, within each depth column, a subtree's children stay
+ * grouped near their parent — a plain sort by id (the old behaviour) scatters siblings across the
+ * column at random and the connector lines cross constantly ("benang kusut"). This is a depth-first
+ * pre-order walk from the branch's roots (nodes with no same-branch prerequisite): each root's
+ * whole subtree is numbered before moving to the next root, so two nodes sharing a parent always
+ * land close together in the next column. The one node in the whole tree with two same-branch
+ * parents (replikasi.worm-split.1, research-tree.ts's own doc comment) is simply claimed by
+ * whichever parent's walk reaches it first; a handful of nodes have no same-branch prerequisite at
+ * all past depth 1 (e.g. pengintaian's flag-reader nodes) — those become extra roots of their own
+ * and sort after the connected part of the tree instead of interleaving with it.
+ */
+function computeTreeOrder(branchNodes: readonly ResearchNode[]): Map<string, number> {
+  const idsInBranch = new Set(branchNodes.map((node) => node.id));
+  const childrenOf = new Map<string, string[]>();
+  const hasSameBranchParent = new Set<string>();
+  for (const node of branchNodes) {
+    for (const requireId of node.requires) {
+      if (!idsInBranch.has(requireId)) {
+        continue;
+      }
+      hasSameBranchParent.add(node.id);
+      const siblings = childrenOf.get(requireId);
+      if (siblings) {
+        siblings.push(node.id);
+      } else {
+        childrenOf.set(requireId, [node.id]);
+      }
+    }
+  }
+  const roots = branchNodes
+    .filter((node) => !hasSameBranchParent.has(node.id))
+    .slice()
+    .sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id));
+
+  const order = new Map<string, number>();
+  let counter = 0;
+  function visit(nodeId: string): void {
+    if (order.has(nodeId)) {
+      return;
+    }
+    order.set(nodeId, counter++);
+    for (const childId of (childrenOf.get(nodeId) ?? []).slice().sort((a, b) => a.localeCompare(b))) {
+      visit(childId);
+    }
+  }
+  for (const root of roots) {
+    visit(root.id);
+  }
+  return order;
+}
+
+/** A single skill-tree node: a round tappable glyph plus its name underneath. All the detail
+ * (summary, unlocks, cost, buy button) lives in the detail modal, opened via `onOpen`. */
+function ResearchNodeGlyph({ node, status, isOpen, onOpen, glyphRef }: { node: ResearchNode; status: NodeStatus; isOpen: boolean; onOpen: (id: string) => void; glyphRef: (el: HTMLButtonElement | null) => void }): JSX.Element {
   return (
-    <li
-      className="payload-research-node"
-      data-testid="research-node"
-      data-node-id={node.id}
-      data-status={status}
-      style={{ marginLeft: (node.depth === 0 ? 0 : node.depth - 1) * 14, borderColor: status === "selesai" ? BRANCH_COLOR[node.branch] : theme.border }}
-    >
-      <div className="payload-research-node-main">
-        <span className="payload-research-node-name">{node.name}</span>
-        <span className="payload-research-node-cost">{node.costData === 0 ? "gratis" : `${node.costData} Data`}</span>
-      </div>
-      <p className="payload-card-note">{node.summary}</p>
-      <ul className="payload-research-unlocks">
-        {node.unlocks.map((unlock, index) => (
-          <li key={index}>{describeUnlock(unlock)}</li>
-        ))}
-      </ul>
-      {status === "terkunci" && missingRequires.length > 0 && (
-        <p className="payload-card-note" data-testid="research-node-locked-reason">
-          Terkunci: butuh{" "}
-          {missingRequires.map((required, index) => (
-            <span key={required.id}>
-              {index > 0 ? ", " : ""}
-              <button type="button" className="payload-link-button" onClick={() => onFocusRequire(required.id)}>
-                {required.name}
-              </button>
-            </span>
-          ))}
-        </p>
-      )}
-      <div className="payload-research-node-footer">
-        <span className="payload-research-node-status" data-testid="research-node-status">
-          {STATUS_LABEL[status]}
-        </span>
-        {status === "bisa" && (
-          <button type="button" className="payload-btn-primary" data-testid="research-node-button" disabled={!canAfford} onClick={() => research(node.id)}>
-            Riset
-          </button>
-        )}
-      </div>
+    <li className="payload-research-node" data-testid="research-node" data-node-id={node.id} data-status={status}>
+      <button
+        ref={glyphRef}
+        type="button"
+        className="payload-research-node-button"
+        data-testid="research-node-open"
+        data-open={isOpen}
+        aria-label={`${node.name} — ${STATUS_LABEL[status]}`}
+        style={{
+          borderColor: status === "terkunci" ? theme.border : BRANCH_COLOR[node.branch],
+          background: status === "selesai" ? BRANCH_COLOR[node.branch] : theme.backgroundPanel,
+          color: status === "selesai" ? theme.background : status === "terkunci" ? theme.textMuted : BRANCH_COLOR[node.branch],
+        }}
+        onClick={() => onOpen(node.id)}
+      >
+        {STATUS_GLYPH[status]}
+      </button>
+      <span className="payload-research-node-label">{node.name}</span>
     </li>
   );
 }
@@ -113,9 +166,15 @@ export function Research(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const data = useResearchStore((state) => state.data);
   const completed = useResearchStore((state) => state.completed);
+  const research = useResearchStore((state) => state.research);
   const focusId = searchParams.get("focus");
   const focusedNode = focusId ? researchNodeFor(RESEARCH_TREE, focusId) : undefined;
   const [activeBranch, setActiveBranch] = useState<ResearchBranch>(focusedNode?.branch ?? "inti");
+  const [openNodeId, setOpenNodeId] = useState<string | undefined>(focusedNode?.id);
+
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const nodeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [lines, setLines] = useState<readonly TreeLine[]>([]);
 
   const completedCount = completed.length;
   const totalCount = RESEARCH_TREE.length;
@@ -129,13 +188,87 @@ export function Research(): JSX.Element {
     [activeBranch],
   );
 
+  const columns = useMemo(() => {
+    const order = computeTreeOrder(branchNodes);
+    const byDepth = new Map<number, ResearchNode[]>();
+    for (const node of branchNodes) {
+      const existing = byDepth.get(node.depth);
+      if (existing) {
+        existing.push(node);
+      } else {
+        byDepth.set(node.depth, [node]);
+      }
+    }
+    for (const nodes of byDepth.values()) {
+      nodes.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    }
+    return [...byDepth.entries()].sort(([a], [b]) => a - b);
+  }, [branchNodes]);
+
+  useLayoutEffect(() => {
+    const container = treeRef.current;
+    if (!container) {
+      return;
+    }
+    function recompute(): void {
+      if (!container) {
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const next: TreeLine[] = [];
+      for (const node of branchNodes) {
+        const childEl = nodeRefs.current.get(node.id);
+        if (!childEl) {
+          continue;
+        }
+        for (const requireId of node.requires) {
+          const parentEl = nodeRefs.current.get(requireId); // undefined for cross-branch requires — no line to draw.
+          if (!parentEl) {
+            continue;
+          }
+          const parentRect = parentEl.getBoundingClientRect();
+          const childRect = childEl.getBoundingClientRect();
+          next.push({
+            id: `${requireId}->${node.id}`,
+            x1: parentRect.right - containerRect.left,
+            y1: parentRect.top + parentRect.height / 2 - containerRect.top,
+            x2: childRect.left - containerRect.left,
+            y2: childRect.top + childRect.height / 2 - containerRect.top,
+            done: completed.includes(requireId) && completed.includes(node.id),
+          });
+        }
+      }
+      setLines(next);
+    }
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(container);
+    window.addEventListener("resize", recompute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, [branchNodes, completed, data]);
+
+  /** Switches to a node's branch, opens its detail modal, and syncs `?focus=` so the jump is
+   * shareable/deep-linkable — used both for tapping a map node and for a locked-reason link. */
   function focusOn(nodeId: string): void {
     const node = researchNodeFor(RESEARCH_TREE, nodeId);
     if (node) {
       setActiveBranch(node.branch);
       setSearchParams({ focus: nodeId });
+      setOpenNodeId(nodeId);
     }
   }
+
+  function closeDetail(): void {
+    setOpenNodeId(undefined);
+  }
+
+  const openNode = openNodeId ? researchNodeFor(RESEARCH_TREE, openNodeId) : undefined;
+  const openStatus = openNode ? statusOf(openNode, completed, data) : undefined;
+  const openMissingRequires = openNode ? openNode.requires.map((id) => researchNodeFor(RESEARCH_TREE, id)!).filter((required) => !completed.includes(required.id)) : [];
+  const canAffordOpen = openNode ? data >= openNode.costData : false;
 
   return (
     <Screen title="Research">
@@ -159,20 +292,106 @@ export function Research(): JSX.Element {
             data-branch={branch}
             className="payload-research-tab"
             style={{ borderColor: BRANCH_COLOR[branch], background: activeBranch === branch ? BRANCH_COLOR[branch] : "transparent", color: activeBranch === branch ? theme.background : BRANCH_COLOR[branch] }}
-            onClick={() => setActiveBranch(branch)}
+            onClick={() => {
+              setActiveBranch(branch);
+              closeDetail();
+            }}
           >
             {BRANCH_LABEL[branch]}
           </button>
         ))}
       </div>
 
-      <ul className="payload-research-list" data-testid="research-node-list">
-        {branchNodes.map((node) => {
-          const status = statusOf(node, completed, data);
-          const missingRequires = node.requires.map((id) => researchNodeFor(RESEARCH_TREE, id)!).filter((required) => !completed.includes(required.id));
-          return <ResearchNodeRow key={node.id} node={node} status={status} missingRequires={missingRequires} onFocusRequire={focusOn} />;
-        })}
-      </ul>
+      <div className="payload-research-tree-scroll" data-testid="research-node-list">
+        <div className="payload-research-tree" ref={treeRef}>
+          <svg className="payload-research-tree-lines" aria-hidden="true">
+            {lines.map((line) => (
+              <path key={line.id} d={connectorPath(line.x1, line.y1, line.x2, line.y2)} className="payload-research-tree-line" style={{ stroke: line.done ? BRANCH_COLOR[activeBranch] : theme.textMuted, opacity: line.done ? 1 : 0.4 }} />
+            ))}
+          </svg>
+          <div className="payload-research-tree-columns">
+            {columns.map(([depth, nodes]) => (
+              <div key={depth} className="payload-research-tree-column">
+                <span className="payload-research-tree-column-label">{DEPTH_LABEL[depth] ?? `Tahap ${depth}`}</span>
+                <ul className="payload-research-list">
+                  {nodes.map((node) => (
+                    <ResearchNodeGlyph
+                      key={node.id}
+                      node={node}
+                      status={statusOf(node, completed, data)}
+                      isOpen={node.id === openNodeId}
+                      onOpen={focusOn}
+                      glyphRef={(el) => {
+                        if (el) {
+                          nodeRefs.current.set(node.id, el);
+                        } else {
+                          nodeRefs.current.delete(node.id);
+                        }
+                      }}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {openNode && openStatus && (
+        <div className="payload-modal-backdrop" data-testid="research-detail-backdrop" onClick={closeDetail}>
+          <div className="payload-modal" role="dialog" aria-label={`Detail ${openNode.name}`} data-testid="research-detail" data-node-id={openNode.id} onClick={(event) => event.stopPropagation()}>
+            <h2>{openNode.name}</h2>
+            <p className="payload-defend-detail-body">{openNode.summary}</p>
+            <dl className="payload-defend-detail-stats">
+              <div>
+                <dt>Biaya</dt>
+                <dd data-testid="research-detail-cost">{openNode.costData === 0 ? "Gratis" : `${openNode.costData} Data`}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd data-testid="research-node-status">{STATUS_LABEL[openStatus]}</dd>
+              </div>
+            </dl>
+            <ul className="payload-research-unlocks">
+              {openNode.unlocks.map((unlock, index) => (
+                <li key={index}>{describeUnlock(unlock)}</li>
+              ))}
+            </ul>
+            {openStatus === "terkunci" && openMissingRequires.length > 0 && (
+              <p className="payload-card-note" data-testid="research-node-locked-reason">
+                Terkunci: butuh{" "}
+                {openMissingRequires.map((required, index) => (
+                  <span key={required.id}>
+                    {index > 0 ? ", " : ""}
+                    <button type="button" className="payload-link-button" onClick={() => focusOn(required.id)}>
+                      {required.name}
+                    </button>
+                  </span>
+                ))}
+              </p>
+            )}
+            <div className="payload-research-detail-actions">
+              <button type="button" data-testid="research-detail-close" onClick={closeDetail}>
+                Tutup
+              </button>
+              {openStatus === "bisa" && (
+                <button
+                  type="button"
+                  className="payload-btn-primary"
+                  data-testid="research-node-button"
+                  disabled={!canAffordOpen}
+                  onClick={() => {
+                    research(openNode.id);
+                    closeDetail();
+                  }}
+                >
+                  Riset
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Screen>
   );
 }
