@@ -9,20 +9,35 @@ function reportWith(overrides: Partial<DominanceReport>): DominanceReport {
   return { populationSize: 1, sampleSize: 10, seed: 1, results: [], dominantViruses: [], dominantDefenses: [], ...overrides };
 }
 
-describe("searchDominance", () => {
-  it("runs every population member against every defense", () => {
-    const population = generatePopulation(11, 3);
-    const report = searchDominance(population, DEFENSE_ARCHETYPES, 2, 1);
-    expect(report.results).toHaveLength(population.length * DEFENSE_ARCHETYPES.length);
-    expect(report.populationSize).toBe(3);
-  });
+// Locally these run in well under a second each (searchDominance is thousands of simulate() calls,
+// each sub-millisecond) — but CI runs this alongside every other package's suite via turbo, and
+// under that shared-runner contention they've measured 5s+, past vitest's 5000ms default. A wider
+// budget accounts for that contention without hiding an actual hang (30s is still generous headroom
+// short of "never times out").
+const CI_CONTENTION_TIMEOUT_MS = 30_000;
 
-  it("is reproducible from its seed", () => {
-    const population = generatePopulation(11, 2);
-    const first = searchDominance(population, DEFENSE_ARCHETYPES, 3, 500);
-    const second = searchDominance(population, DEFENSE_ARCHETYPES, 3, 500);
-    expect(JSON.stringify(first.results)).toBe(JSON.stringify(second.results));
-  });
+describe("searchDominance", () => {
+  it(
+    "runs every population member against every defense",
+    () => {
+      const population = generatePopulation(11, 3);
+      const report = searchDominance(population, DEFENSE_ARCHETYPES, 2, 1);
+      expect(report.results).toHaveLength(population.length * DEFENSE_ARCHETYPES.length);
+      expect(report.populationSize).toBe(3);
+    },
+    CI_CONTENTION_TIMEOUT_MS,
+  );
+
+  it(
+    "is reproducible from its seed",
+    () => {
+      const population = generatePopulation(11, 2);
+      const first = searchDominance(population, DEFENSE_ARCHETYPES, 3, 500);
+      const second = searchDominance(population, DEFENSE_ARCHETYPES, 3, 500);
+      expect(JSON.stringify(first.results)).toBe(JSON.stringify(second.results));
+    },
+    CI_CONTENTION_TIMEOUT_MS,
+  );
 });
 
 describe("dominance flagging", () => {
